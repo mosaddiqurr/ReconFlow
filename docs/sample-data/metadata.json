@@ -1,0 +1,24 @@
+{
+  "scan_id": "scan_001_training_example",
+  "target": "training.example",
+  "target_type": "domain",
+  "mode": "standard",
+  "status": "sample-fixture",
+  "tools_planned": [
+    "subfinder",
+    "dnsx",
+    "nmap",
+    "httpx",
+    "whatweb",
+    "feroxbuster",
+    "nuclei"
+  ],
+  "tools_completed": [
+    "dnsx",
+    "nmap",
+    "httpx",
+    "whatweb"
+  ],
+  "overall_risk_score": 0,
+  "note": "Synthetic documentation fixture. Not a real scan result."
+}

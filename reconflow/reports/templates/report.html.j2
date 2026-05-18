@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>ReconFlow Report {{ scan_id }}</title>
+    <style>
+      body {
+        color: #18202a;
+        font-family: Arial, sans-serif;
+        line-height: 1.5;
+        margin: 32px;
+      }
+      h1, h2, h3 {
+        color: #111827;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 12px 0 24px;
+        width: 100%;
+      }
+      th, td {
+        border: 1px solid #d0d7de;
+        padding: 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #f3f4f6;
+      }
+      .score {
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ReconFlow Report</h1>
+    <p><strong>Scan ID:</strong> {{ scan_id }}</p>
+
+    <h2>1. Executive Summary</h2>
+    <p>
+      ReconFlow analyzed <strong>{{ executive_summary.target }}</strong> in
+      <strong>{{ executive_summary.mode }}</strong> mode using parsed scan artifacts.
+      The overall attack surface risk score is
+      <strong>{{ overall_risk_score }}/100</strong>.
+    </p>
+    <ul>
+      <li>Prioritized findings: {{ executive_summary.finding_count }}</li>
+      <li>High-priority findings: {{ executive_summary.high_priority_finding_count }}</li>
+      <li>Discovered assets: {{ executive_summary.asset_count }}</li>
+      <li>Live hosts: {{ executive_summary.live_host_count }}</li>
+      <li>Open services: {{ executive_summary.service_count }}</li>
+      <li>Interesting endpoints: {{ executive_summary.interesting_endpoint_count }}</li>
+    </ul>
+
+    <h2>2. Target Scope</h2>
+    <table>
+      <tr><th>Field</th><th>Value</th></tr>
+      <tr><td>Target</td><td>{{ target_scope.target }}</td></tr>
+      <tr><td>Target type</td><td>{{ target_scope.target_type }}</td></tr>
+      <tr><td>Scan mode</td><td>{{ target_scope.mode }}</td></tr>
+      <tr><td>Authorization status</td><td>{{ target_scope.authorization_status }}</td></tr>
+    </table>
+
+    <h2>3. Tools Used</h2>
+    <ul>
+      {% for tool in tools_used %}
+      <li>{{ tool }}</li>
+      {% else %}
+      <li>No tools completed for this scan.</li>
+      {% endfor %}
+    </ul>
+
+    <h2>4. Recon Workflow</h2>
+    <ol>
+      {% for tool in recon_workflow %}
+      <li>{{ tool }}</li>
+      {% else %}
+      <li>No workflow steps were recorded.</li>
+      {% endfor %}
+    </ol>
+
+    <h2>5. Discovered Assets</h2>
+    <table>
+      <tr><th>Hostname</th><th>IP</th><th>Record type</th><th>Resolved</th></tr>
+      {% for asset in assets %}
+      <tr><td>{{ asset.hostname }}</td><td>{{ asset.ip or "-" }}</td><td>{{ asset.record_type or "-" }}</td><td>{{ asset.is_resolved }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>6. Live Hosts</h2>
+    <table>
+      <tr><th>URL</th><th>Host</th><th>Status</th><th>Title</th></tr>
+      {% for host in live_hosts %}
+      <tr><td>{{ host.url }}</td><td>{{ host.host }}</td><td>{{ host.status_code or "-" }}</td><td>{{ host.title or "-" }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>7. Open Ports and Services</h2>
+    <table>
+      <tr><th>Host</th><th>Port</th><th>Protocol</th><th>Service</th><th>Product</th></tr>
+      {% for service in services %}
+      <tr><td>{{ service.host }}</td><td>{{ service.port }}</td><td>{{ service.protocol }}</td><td>{{ service.service_name or "-" }}</td><td>{{ service.product or "-" }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>8. Technologies</h2>
+    <table>
+      <tr><th>Host</th><th>URL</th><th>Technology</th><th>Version</th><th>Category</th></tr>
+      {% for technology in technologies %}
+      <tr><td>{{ technology.host }}</td><td>{{ technology.url }}</td><td>{{ technology.name }}</td><td>{{ technology.version or "-" }}</td><td>{{ technology.category or "-" }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>9. Interesting Endpoints</h2>
+    <table>
+      <tr><th>URL</th><th>Host</th><th>Path</th><th>Status</th></tr>
+      {% for endpoint in interesting_endpoints %}
+      <tr><td>{{ endpoint.url }}</td><td>{{ endpoint.host }}</td><td>{{ endpoint.path }}</td><td>{{ endpoint.status_code or "-" }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>10. Vulnerability Findings</h2>
+    <p>Scanner-reported vulnerability findings are listed as parsed observations and should be validated manually.</p>
+    <table>
+      <tr><th>Severity</th><th>Name</th><th>Host</th><th>Matched URL</th></tr>
+      {% for vulnerability in vulnerabilities %}
+      <tr><td>{{ vulnerability.severity }}</td><td>{{ vulnerability.name }}</td><td>{{ vulnerability.host }}</td><td>{{ vulnerability.matched_url }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>No vulnerability findings were parsed.</td><td>-</td><td>-</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>11. Prioritized Findings</h2>
+    <table>
+      <tr><th>Severity</th><th>Finding</th><th>Host/URL</th><th>Risk score</th></tr>
+      {% for finding in findings %}
+      <tr><td>{{ finding.severity }}</td><td>{{ finding.title }}</td><td>{{ finding.affected_url or finding.affected_host }}</td><td>{{ finding.risk_score }}</td></tr>
+      {% else %}
+      <tr><td>-</td><td>No prioritized findings were generated.</td><td>-</td><td>0</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>12. Overall Risk Score</h2>
+    <p class="score">{{ overall_risk_score }}/100</p>
+
+    <h2>13. Recommended Next Steps</h2>
+    <ul>
+      {% for step in recommended_next_steps %}
+      <li>{{ step }}</li>
+      {% endfor %}
+    </ul>
+
+    <h2>14. Evidence Appendix</h2>
+    {% for item in evidence_appendix %}
+    <h3>{{ item.title }}</h3>
+    <ul>
+      <li>Host: {{ item.affected_host }}</li>
+      <li>URL: {{ item.affected_url or "-" }}</li>
+      <li>Source tools: {% if item.source_tools %}{{ item.source_tools | join(", ") }}{% else %}-{% endif %}</li>
+      {% for evidence in item.evidence %}
+      <li>Evidence: {{ evidence }}</li>
+      {% else %}
+      <li>Evidence: -</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p>No evidence appendix entries were generated.</p>
+    {% endfor %}
+  </body>
+</html>

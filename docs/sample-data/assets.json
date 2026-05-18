@@ -1,0 +1,9 @@
+[
+  {
+    "hostname": "app.training.example",
+    "ip": "192.0.2.10",
+    "record_type": "A",
+    "source_tool": "dnsx",
+    "is_resolved": true
+  }
+]

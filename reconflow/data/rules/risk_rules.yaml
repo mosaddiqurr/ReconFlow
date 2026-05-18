@@ -1,0 +1,65 @@
+severity_scores:
+  informational: 10
+  info: 10
+  low: 25
+  medium: 50
+  high: 75
+  critical: 95
+
+finding_rules:
+  public_admin_login_surface:
+    title: Public admin/login surface
+    severity: medium
+    risk_score: 60
+    recommendation: Restrict administrative and login surfaces with strong authentication, access controls, and monitoring.
+
+  wordpress_admin_surface:
+    title: WordPress admin surface
+    severity: high
+    risk_score: 70
+    recommendation: Restrict access to wp-admin, enforce MFA, and keep WordPress core, themes, and plugins patched.
+
+  development_or_staging_host:
+    title: Development or staging host
+    severity: medium
+    risk_score: 50
+    recommendation: Move non-production hosts behind private access controls or confirm they do not expose sensitive data.
+
+  exposed_backup_config_file:
+    title: Exposed backup/config file
+    severity: high
+    risk_score: 80
+    recommendation: Remove exposed backup/config files from public web roots and rotate any secrets that may have been exposed.
+
+  open_database_service_port:
+    title: Open database/service port
+    severity: high
+    risk_score: 75
+    recommendation: Restrict database and administrative service ports to trusted networks and require strong authentication.
+
+  interesting_endpoint_discovered:
+    title: Interesting endpoint discovered
+    severity: low
+    risk_score: 35
+    recommendation: Review the endpoint for intended exposure, authentication requirements, and sensitive functionality.
+
+  nuclei_high_or_critical_finding:
+    title: Nuclei high or critical finding
+    severity: high
+    risk_score: 80
+    severity_scores:
+      high: 80
+      critical: 95
+    recommendation: Validate the finding manually, prioritize remediation, and avoid exploitation during verification.
+
+  multiple_exposed_services_on_one_host:
+    title: Multiple exposed services on one host
+    severity: medium
+    risk_score: 55
+    min_open_services: 3
+    recommendation: Reduce exposed services to the minimum required and segment management or internal services.
+
+overall_risk:
+  per_additional_finding_bonus: 3
+  high_or_critical_bonus: 8
+  exposed_database_bonus: 5

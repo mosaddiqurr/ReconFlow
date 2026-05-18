@@ -1,0 +1,12 @@
+[
+  {
+    "host": "192.0.2.10",
+    "port": 443,
+    "protocol": "tcp",
+    "service_name": "https",
+    "product": "nginx",
+    "version": "1.24",
+    "state": "open",
+    "source_tool": "nmap"
+  }
+]

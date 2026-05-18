@@ -1,0 +1,6 @@
+rules:
+  - id: simple-correlation
+    description: Placeholder correlation rule
+    match_on:
+      - host
+      - port

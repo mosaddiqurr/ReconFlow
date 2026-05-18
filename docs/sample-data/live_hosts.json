@@ -1,0 +1,14 @@
+[
+  {
+    "url": "https://app.training.example",
+    "host": "app.training.example",
+    "status_code": 200,
+    "title": "Training Fixture",
+    "webserver": "nginx",
+    "content_length": 1024,
+    "technologies": [
+      "nginx"
+    ],
+    "source_tool": "httpx"
+  }
+]

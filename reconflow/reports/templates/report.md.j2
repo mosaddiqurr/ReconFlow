@@ -1,0 +1,144 @@
+# ReconFlow Report
+
+Scan ID: {{ scan_id }}
+
+## 1. Executive Summary
+
+ReconFlow analyzed **{{ executive_summary.target }}** in **{{ executive_summary.mode }}** mode using parsed scan artifacts. The overall attack surface risk score is **{{ overall_risk_score }}/100**.
+
+- Prioritized findings: {{ executive_summary.finding_count }}
+- High-priority findings: {{ executive_summary.high_priority_finding_count }}
+- Discovered assets: {{ executive_summary.asset_count }}
+- Live hosts: {{ executive_summary.live_host_count }}
+- Open services: {{ executive_summary.service_count }}
+- Interesting endpoints: {{ executive_summary.interesting_endpoint_count }}
+
+## 2. Target Scope
+
+| Field | Value |
+| --- | --- |
+| Target | {{ target_scope.target }} |
+| Target type | {{ target_scope.target_type }} |
+| Scan mode | {{ target_scope.mode }} |
+| Authorization status | {{ target_scope.authorization_status }} |
+
+## 3. Tools Used
+
+{% if tools_used %}
+{% for tool in tools_used %}
+- {{ tool }}
+{% endfor %}
+{% else %}
+- No tools completed for this scan.
+{% endif %}
+
+## 4. Recon Workflow
+
+{% if recon_workflow %}
+{% for tool in recon_workflow %}
+{{ loop.index }}. {{ tool }}
+{% endfor %}
+{% else %}
+No workflow steps were recorded.
+{% endif %}
+
+## 5. Discovered Assets
+
+| Hostname | IP | Record type | Resolved |
+| --- | --- | --- | --- |
+{% for asset in assets %}
+| {{ asset.hostname }} | {{ asset.ip or "-" }} | {{ asset.record_type or "-" }} | {{ asset.is_resolved }} |
+{% else %}
+| - | - | - | - |
+{% endfor %}
+
+## 6. Live Hosts
+
+| URL | Host | Status | Title |
+| --- | --- | --- | --- |
+{% for host in live_hosts %}
+| {{ host.url }} | {{ host.host }} | {{ host.status_code or "-" }} | {{ host.title or "-" }} |
+{% else %}
+| - | - | - | - |
+{% endfor %}
+
+## 7. Open Ports and Services
+
+| Host | Port | Protocol | Service | Product |
+| --- | --- | --- | --- | --- |
+{% for service in services %}
+| {{ service.host }} | {{ service.port }} | {{ service.protocol }} | {{ service.service_name or "-" }} | {{ service.product or "-" }} |
+{% else %}
+| - | - | - | - | - |
+{% endfor %}
+
+## 8. Technologies
+
+| Host | URL | Technology | Version | Category |
+| --- | --- | --- | --- | --- |
+{% for technology in technologies %}
+| {{ technology.host }} | {{ technology.url }} | {{ technology.name }} | {{ technology.version or "-" }} | {{ technology.category or "-" }} |
+{% else %}
+| - | - | - | - | - |
+{% endfor %}
+
+## 9. Interesting Endpoints
+
+| URL | Host | Path | Status |
+| --- | --- | --- | --- |
+{% for endpoint in interesting_endpoints %}
+| {{ endpoint.url }} | {{ endpoint.host }} | {{ endpoint.path }} | {{ endpoint.status_code or "-" }} |
+{% else %}
+| - | - | - | - |
+{% endfor %}
+
+## 10. Vulnerability Findings
+
+Scanner-reported vulnerability findings are listed as parsed observations and should be validated manually.
+
+| Severity | Name | Host | Matched URL |
+| --- | --- | --- | --- |
+{% for vulnerability in vulnerabilities %}
+| {{ vulnerability.severity }} | {{ vulnerability.name }} | {{ vulnerability.host }} | {{ vulnerability.matched_url }} |
+{% else %}
+| - | No vulnerability findings were parsed. | - | - |
+{% endfor %}
+
+## 11. Prioritized Findings
+
+| Severity | Finding | Host/URL | Risk score |
+| --- | --- | --- | --- |
+{% for finding in findings %}
+| {{ finding.severity }} | {{ finding.title }} | {{ finding.affected_url or finding.affected_host }} | {{ finding.risk_score }} |
+{% else %}
+| - | No prioritized findings were generated. | - | 0 |
+{% endfor %}
+
+## 12. Overall Risk Score
+
+**{{ overall_risk_score }}/100**
+
+## 13. Recommended Next Steps
+
+{% for step in recommended_next_steps %}
+- {{ step }}
+{% endfor %}
+
+## 14. Evidence Appendix
+
+{% for item in evidence_appendix %}
+### {{ item.title }}
+
+- Host: {{ item.affected_host }}
+- URL: {{ item.affected_url or "-" }}
+- Source tools: {% if item.source_tools %}{{ item.source_tools | join(", ") }}{% else %}-{% endif %}
+{% if item.evidence %}
+{% for evidence in item.evidence %}
+- Evidence: {{ evidence }}
+{% endfor %}
+{% else %}
+- Evidence: -
+{% endif %}
+{% else %}
+No evidence appendix entries were generated.
+{% endfor %}

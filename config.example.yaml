@@ -1,0 +1,27 @@
+default_mode: standard
+output_directory: scans
+wordlist_path: reconflow/data/wordlists/common.txt
+enabled_tools:
+  - nmap
+  - subfinder
+  - dnsx
+  - httpx
+  - whatweb
+  - feroxbuster
+  - katana
+  - nuclei
+  - gowitness
+tool_timeouts:
+  nmap: 60
+  subfinder: 60
+  dnsx: 60
+  httpx: 60
+  whatweb: 60
+  feroxbuster: 60
+  katana: 60
+  nuclei: 60
+  gowitness: 60
+safe_defaults:
+  authorization_required: true
+  run_external_tools: false
+  create_outputs: true

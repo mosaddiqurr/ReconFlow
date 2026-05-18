@@ -1,0 +1,10 @@
+[
+  {
+    "host": "app.training.example",
+    "url": "https://app.training.example",
+    "name": "nginx",
+    "version": "1.24",
+    "category": "web server",
+    "source_tool": "whatweb"
+  }
+]
