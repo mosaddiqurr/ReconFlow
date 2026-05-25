@@ -1,7 +1,13 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from reconflow.tools.nmap import build_nmap_command, parse_nmap_xml, save_services_json
+from reconflow.config import ReconFlowConfig
+from reconflow.tools.nmap import (
+    build_nmap_command,
+    parse_nmap_xml,
+    save_services_json,
+    select_nmap_targets,
+)
 
 
 SAMPLE_NMAP_XML = """<?xml version="1.0"?>
@@ -37,6 +43,73 @@ def test_build_nmap_command() -> None:
         "scans/scan_001/raw/nmap.xml",
         "example.com",
     ]
+
+
+def test_select_nmap_targets_deduplicates_duplicate_hostnames() -> None:
+    targets = select_nmap_targets(
+        "example.com",
+        resolved_hosts=["www.example.com", "www.example.com", "api.example.com"],
+    )
+
+    assert targets == ["www.example.com", "api.example.com"]
+
+
+def test_select_nmap_targets_ignores_cname_values() -> None:
+    targets = select_nmap_targets(
+        "example.com",
+        assets=[
+            {
+                "hostname": "www.example.com",
+                "ip": "edge.example.net",
+                "record_type": "CNAME",
+                "is_resolved": True,
+            }
+        ],
+    )
+
+    assert targets == ["example.com"]
+
+
+def test_select_nmap_targets_prefers_unique_a_and_aaaa_ips() -> None:
+    targets = select_nmap_targets(
+        "example.com",
+        assets=[
+            {
+                "hostname": "www.example.com",
+                "ip": "93.184.216.34",
+                "record_type": "A",
+                "is_resolved": True,
+            },
+            {
+                "hostname": "www.example.com",
+                "ip": "93.184.216.34",
+                "record_type": "A",
+                "is_resolved": True,
+            },
+            {
+                "hostname": "www.example.com",
+                "ip": "2606:2800:220:1:248:1893:25c8:1946",
+                "record_type": "AAAA",
+                "is_resolved": True,
+            },
+            {
+                "hostname": "www.example.com",
+                "ip": "edge.example.net",
+                "record_type": "CNAME",
+                "is_resolved": True,
+            },
+        ],
+    )
+
+    assert targets == [
+        "93.184.216.34",
+        "2606:2800:220:1:248:1893:25c8:1946",
+    ]
+
+
+def test_nmap_timeout_default_and_configurable() -> None:
+    assert ReconFlowConfig().tool_timeouts["nmap"] == 300
+    assert ReconFlowConfig(tool_timeouts={"nmap": 120}).tool_timeouts["nmap"] == 120
 
 
 def test_parse_nmap_xml_fixture() -> None:

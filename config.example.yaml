@@ -12,7 +12,7 @@ enabled_tools:
   - nuclei
   - gowitness
 tool_timeouts:
-  nmap: 60
+  nmap: 300
   subfinder: 60
   dnsx: 60
   httpx: 60

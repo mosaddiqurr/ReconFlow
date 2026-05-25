@@ -2,28 +2,28 @@
 
 Scan ID: {{ scan_id }}
 
-## Scan Overview
+## Scan Result
 
 - Target: {{ scan_overview.target }}
-- Target type: {{ scan_overview.target_type }}
-- Scan mode: {{ scan_overview.scan_mode }}
-- Scan time: {{ scan_overview.scan_time }}
-- Overall risk score: {{ scan_overview.overall_risk_score }}/100
-- Risk level: {{ scan_overview.risk_level }}
+- Mode: {{ scan_overview.scan_mode }}
+- Scan status: {{ scan_overview.scan_status }}
+- Confidence: {{ scan_overview.confidence }}
+- Risk: {{ scan_overview.risk_level }}
+- Reports generated: Summary and raw reports
 
-{% if key_findings["items"] %}
-## Key Findings
+{% if what_was_found["items"] %}
+## What Was Found
 
-{% for item in key_findings["items"] %}
-- {{ item }}
+{% for item in what_was_found["items"] %}
+- {{ item.label }}: {{ item.count }}
 {% endfor %}
 
 {% endif %}
-{% if security_observations %}
-## Security-Relevant Observations
+{% if important_observations %}
+## Important Observations
 
-{% for observation in security_observations %}
-- **{{ observation.type }}:** {{ observation.title }} - {{ observation.detail }}
+{% for observation in important_observations %}
+- {{ observation.title }} - {{ observation.detail }}
 {% endfor %}
 
 {% endif %}
@@ -40,10 +40,27 @@ Scan ID: {{ scan_id }}
 {% endfor %}
 {% endif %}
 {% if correlated_findings %}
-## Correlated Risk Findings
+## Correlated Findings
 
 {% for finding in correlated_findings %}
 - **{{ finding.severity }}:** {{ finding.title }} affecting {{ finding.affected }} (risk score {{ finding.risk_score }}). {{ finding.explanation }} Recommended action: {{ finding.recommended_action }}
+{% endfor %}
+
+{% endif %}
+{% if issues_during_scan.has_issues %}
+## Issues During Scan
+
+{% for item in issues_during_scan.timed_out %}
+- Timed out: {{ item.tool }} - {{ item.reason }}. Full error saved to {{ item.stderr_path }}
+{% endfor %}
+{% for item in issues_during_scan.missing %}
+- Missing: {{ item.tool }} - {{ item.reason }}. Full error saved to {{ item.stderr_path }}
+{% endfor %}
+{% for item in issues_during_scan.failed %}
+- Failed: {{ item.tool }} - {{ item.reason }}. Full error saved to {{ item.stderr_path }}
+{% endfor %}
+{% for item in issues_during_scan.parse_warnings %}
+- Parse warning: {{ item.tool }} - {{ item.message }}
 {% endfor %}
 
 {% endif %}
@@ -78,8 +95,8 @@ Scan ID: {{ scan_id }}
 - No tool execution details were recorded.
 {% endif %}
 
-## Report Paths
+## Report Files
 
-- Raw report path: {{ report_paths.raw_report }}
-- Summary report path: {{ report_paths.summary_report }}
-- JSON report path: {{ report_paths.json_report }}
+- Summary HTML: {{ report_paths.summary_html_report }}
+- Raw HTML: {{ report_paths.raw_html_report }}
+- Summary JSON: {{ report_paths.summary_json_report }}

@@ -106,8 +106,9 @@ def test_scan_reports_missing_external_tool(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Missing External Tool" in result.output
-    assert "Install nmap before running this step." in result.output
+    assert "[1/2] nmap missing" in result.output
+    assert "Issues During Scan" in result.output
+    assert "Missing" in result.output
     assert metadata["tools_skipped"][0]["tool"] == "nmap"
 
 
@@ -142,8 +143,8 @@ def test_scan_reports_failed_command(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Command Execution Issue" in result.output
-    assert "Exit Code" in result.output
+    assert "[1/2] nmap failed" in result.output
+    assert "Issues During Scan" in result.output
     assert metadata["tools_failed"][0]["reason"] == "Command failed with exit code 2"
 
 
@@ -178,9 +179,64 @@ def test_scan_reports_timeout(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Command Execution Issue" in result.output
-    assert "Timed Out" in result.output
+    assert "[1/2] nmap timed out" in result.output
+    assert "Issues During Scan" in result.output
     assert metadata["tools_failed"][0]["reason"] == "Command timed out"
+
+
+def test_scan_truncates_long_stderr_and_saves_full_artifact(monkeypatch) -> None:
+    original_cwd = Path.cwd()
+    long_stderr = "\n".join(f"help output line {index}" for index in range(30))
+
+    def fake_check_required_tools():
+        return [_fake_tool_check("nmap", installed=True)]
+
+    def fake_run_nmap(target, scan_folder, timeout=None):
+        return ToolRunResult(
+            tool_name="nmap",
+            command=["nmap", "example.com"],
+            exit_code=2,
+            stdout="",
+            stderr=long_stderr,
+            start_time="2026-05-18T00:00:00+00:00",
+            end_time="2026-05-18T00:00:01+00:00",
+            duration_seconds=1.0,
+            timed_out=False,
+        )
+
+    def fake_run_httpx(target, scan_folder, resolved_hosts=None, timeout=None):
+        return _tool_result("httpx", 0)
+
+    monkeypatch.setattr("reconflow.cli.check_required_tools", fake_check_required_tools)
+    monkeypatch.setattr("reconflow.cli.run_nmap", fake_run_nmap)
+    monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
+
+    with TemporaryDirectory() as tmp_dir:
+        temp_path = Path(tmp_dir)
+        try:
+            monkeypatch.chdir(temp_path)
+            result = runner.invoke(
+                app,
+                ["scan", "example.com", "--mode", "quick", "--i-authorize"],
+            )
+            stderr_path = (
+                temp_path
+                / "scans"
+                / "scan_001_example_com"
+                / "raw"
+                / "nmap.stderr.txt"
+            )
+            saved_stderr = stderr_path.read_text(encoding="utf-8")
+        finally:
+            monkeypatch.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "[1/2] nmap failed" in result.output
+    assert "Issues During Scan" in result.output
+    assert "Full error saved" in result.output
+    assert "help output line 0" not in result.output
+    assert "help output line 20" not in result.output
+    assert saved_stderr == long_stderr
 
 
 def test_dry_run_does_not_execute_external_tools(monkeypatch) -> None:

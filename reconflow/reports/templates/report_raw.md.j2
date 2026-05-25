@@ -2,16 +2,18 @@
 
 Scan ID: {{ scan_id }}
 
-## Scan Overview
+## Scan Metadata
 
 - Target: {{ scan_overview.target }}
 - Target type: {{ scan_overview.target_type }}
 - Scan mode: {{ scan_overview.scan_mode }}
 - Scan time: {{ scan_overview.scan_time }}
+- Scan status: {{ scan_overview.scan_status }}
+- Confidence: {{ scan_overview.confidence }}
 - Overall risk score: {{ overall_risk_score }}/100
 - Risk level: {{ risk_level }}
 
-## Tool Results
+## Tool-by-Tool Results
 
 {% for tool in tool_results %}
 ### Tool {{ tool.index }}: {{ tool.tool }}
@@ -84,7 +86,7 @@ No correlated findings were generated.
 
 {{ overall_risk_score }}/100
 
-## Report Paths
+## Artifacts
 
 - Raw report path: {{ report_paths.raw_report }}
 - Summary report path: {{ report_paths.summary_report }}

@@ -1,11 +1,14 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from reconflow.models.tool_result import ToolRunResult
 from reconflow.tools.gowitness import (
     build_gowitness_command,
     collect_screenshot_metadata,
     load_gowitness_targets,
+    parse_gowitness_jsonl,
     parse_gowitness_metadata,
+    run_gowitness,
     save_screenshots_json,
     write_gowitness_input,
 )
@@ -67,18 +70,84 @@ def test_build_gowitness_command() -> None:
     command = build_gowitness_command(
         "scans/scan_001/raw/gowitness_input.txt",
         "scans/scan_001/screenshots",
+        "scans/scan_001/raw/gowitness.jsonl",
     )
 
-    assert command == [
-        "gowitness",
-        "scan",
-        "file",
-        "-f",
+    assert "--disable-db" not in command
+    assert "--screenshot-path" in command
+    assert "scans/scan_001/screenshots" in command
+    assert "--write-jsonl" in command
+    assert "--write-jsonl-file" in command
+    assert "scans/scan_001/raw/gowitness.jsonl" in command
+
+
+def test_build_gowitness_command_falls_back_without_jsonl_file_flag() -> None:
+    command = build_gowitness_command(
         "scans/scan_001/raw/gowitness_input.txt",
-        "--screenshot-path",
         "scans/scan_001/screenshots",
-        "--disable-db",
-    ]
+        "scans/scan_001/raw/gowitness.jsonl",
+        supports_jsonl_file=False,
+    )
+
+    assert "--write-jsonl" in command
+    assert "--write-jsonl-file" not in command
+
+
+def test_parse_gowitness_jsonl_fixture() -> None:
+    with TemporaryDirectory() as tmp_dir:
+        jsonl_path = Path(tmp_dir) / "gowitness.jsonl"
+        jsonl_path.write_text(
+            '{"url":"https://example.com","host":"example.com","screenshot_path":"screenshots/example.com.png","status":"captured"}\n',
+            encoding="utf-8",
+        )
+
+        screenshots = parse_gowitness_jsonl(jsonl_path)
+
+    assert len(screenshots) == 1
+    assert screenshots[0].url == "https://example.com"
+    assert screenshots[0].screenshot_path == "screenshots/example.com.png"
+
+
+def test_run_gowitness_falls_back_when_jsonl_file_flag_is_unsupported(
+    monkeypatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run_command(
+        tool_name,
+        command,
+        timeout=None,
+        stdout_path=None,
+        stderr_path=None,
+    ):
+        commands.append(command)
+        return ToolRunResult(
+            tool_name=tool_name,
+            command=command,
+            exit_code=1 if len(commands) == 1 else 0,
+            stdout="",
+            stderr="unknown flag: --write-jsonl-file" if len(commands) == 1 else "",
+            start_time="2026-05-18T00:00:00+00:00",
+            end_time="2026-05-18T00:00:01+00:00",
+            duration_seconds=1.0,
+            timed_out=False,
+            stdout_path=str(stdout_path) if stdout_path else None,
+            stderr_path=str(stderr_path) if stderr_path else None,
+        )
+
+    monkeypatch.setattr("reconflow.tools.gowitness.run_command", fake_run_command)
+
+    with TemporaryDirectory() as tmp_dir:
+        scan_path = Path(tmp_dir)
+        live_hosts_path = scan_path / "parsed" / "live_hosts.json"
+        live_hosts_path.parent.mkdir()
+        live_hosts_path.write_text(SAMPLE_LIVE_HOSTS_JSON, encoding="utf-8")
+
+        result = run_gowitness(scan_path, live_hosts_path)
+
+    assert result.exit_code == 0
+    assert "--write-jsonl-file" in commands[0]
+    assert "--write-jsonl-file" not in commands[1]
 
 
 def test_parse_gowitness_metadata_fixture() -> None:

@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 from reconflow.cli import app
 from reconflow.core.storage import create_scan_folder, read_scan_metadata, write_scan_metadata
 from reconflow.reports.json_report import (
+    build_summary_report_context,
     generate_all_report_views,
     generate_reports,
 )
@@ -134,10 +135,11 @@ def test_generate_all_reports_from_sample_parsed_data(tmp_path) -> None:
     assert generated["html"].exists()
     assert generated["json"].exists()
     assert "# ReconFlow Summary Report" in markdown_text
-    assert "## Scan Overview" in markdown_text
-    assert "## Key Findings" in markdown_text
-    assert "## Correlated Risk Findings" in markdown_text
-    assert "<h2>Scan Overview</h2>" in html_text
+    assert "## Scan Result" in markdown_text
+    assert "## What Was Found" in markdown_text
+    assert "## Correlated Findings" in markdown_text
+    assert "<h2>Scan Result</h2>" in html_text
+    assert "<h2>Scan Overview</h2>" not in html_text
     assert json_payload["view"] == "summary"
     assert json_payload["scan_overview"]["overall_risk_score"] == 60
     assert json_payload["correlated_findings"][0]["title"] == (
@@ -289,11 +291,11 @@ def test_summary_report_omits_empty_noisy_sections(tmp_path) -> None:
     generated = generate_reports(scan_path, "markdown", view="summary")
     summary_text = generated["markdown"].read_text(encoding="utf-8")
 
-    assert "## Scan Overview" in summary_text
-    assert "## Key Findings" not in summary_text
-    assert "## Security-Relevant Observations" not in summary_text
+    assert "## Scan Result" in summary_text
+    assert "## What Was Found" not in summary_text
+    assert "## Important Observations" not in summary_text
     assert "## Vulnerability Summary" not in summary_text
-    assert "## Correlated Risk Findings" not in summary_text
+    assert "## Correlated Findings" not in summary_text
     assert "No major security-relevant findings were identified" in summary_text
 
 
@@ -311,10 +313,51 @@ def test_summary_report_only_includes_non_zero_findings(tmp_path) -> None:
     generated = generate_reports(scan_path, "markdown", view="summary")
     summary_text = generated["markdown"].read_text(encoding="utf-8")
 
-    assert "1 open service was discovered." in summary_text
-    assert "1 live web application was detected." in summary_text
-    assert "1 endpoint was discovered." in summary_text
+    assert "Open ports: 1" in summary_text
+    assert "Live web services: 1" in summary_text
+    assert "Interesting endpoints: 1" in summary_text
     assert "0 vulnerability" not in summary_text
+
+
+def test_summary_filters_noisy_technologies(tmp_path) -> None:
+    metadata = create_scan_folder(
+        target="review.example.com",
+        target_type="domain",
+        mode="standard",
+        base_dir=tmp_path / "scans",
+        tools_planned=["httpx", "whatweb"],
+    )
+    scan_path = Path(metadata["output_dir"])
+    (scan_path / "parsed" / "technologies.json").write_text(
+        json.dumps(
+            [
+                {"host": "review.example.com", "name": "Country"},
+                {"host": "review.example.com", "name": "IP"},
+                {"host": "review.example.com", "name": "HTTPServer"},
+                {"host": "review.example.com", "name": "RedirectLocation"},
+                {"host": "review.example.com", "name": "UncommonHeaders"},
+                {
+                    "host": "review.example.com",
+                    "name": "Netlify",
+                    "category": "CDN",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (scan_path / "parsed" / "findings.json").write_text(
+        json.dumps({"overall_risk_score": 0, "findings": []}),
+        encoding="utf-8",
+    )
+
+    context = build_summary_report_context(scan_path)
+    technology_titles = [
+        observation["title"]
+        for observation in context["important_observations"]
+        if observation["type"] == "Technology"
+    ]
+
+    assert technology_titles == ["Netlify"]
 
 
 def test_raw_report_includes_tool_by_tool_sections(tmp_path) -> None:
@@ -328,11 +371,13 @@ def test_raw_report_includes_tool_by_tool_sections(tmp_path) -> None:
     scan_path = Path(metadata["output_dir"])
     _write_sample_parsed_data(scan_path)
 
-    generated = generate_reports(scan_path, "markdown", view="raw")
+    generated = generate_reports(scan_path, "all", view="raw")
     raw_text = generated["markdown"].read_text(encoding="utf-8")
+    raw_html = (scan_path / "reports" / "report_raw.html").read_text(encoding="utf-8")
 
     assert "# ReconFlow Raw Report" in raw_text
-    assert "## Tool Results" in raw_text
+    assert "## Tool-by-Tool Results" in raw_text
+    assert "<h2>Tool-by-Tool Results</h2>" in raw_html
     assert "### Tool 1: nmap" in raw_text
     assert "### Tool 2: httpx" in raw_text
     assert "### Tool 3: feroxbuster" in raw_text
@@ -421,7 +466,109 @@ def test_missing_tools_stay_in_tool_execution_summary(tmp_path) -> None:
     payload = json.loads(generated["json"].read_text(encoding="utf-8"))
 
     assert payload["tool_execution_summary"]["missing_tools"] == ["nuclei"]
+    assert payload["issues_during_scan"]["missing"][0]["tool"] == "nuclei"
+
+
+def test_summary_marks_scan_partially_completed_when_nmap_times_out(tmp_path) -> None:
+    metadata = create_scan_folder(
+        target="review.example.com",
+        target_type="domain",
+        mode="deep",
+        base_dir=tmp_path / "scans",
+        tools_planned=["nmap", "httpx"],
+    )
+    metadata["tools_failed"] = [{"tool": "nmap", "reason": "Command timed out"}]
+    scan_path = Path(metadata["output_dir"])
+    write_scan_metadata(scan_path, metadata)
+    (scan_path / "parsed" / "findings.json").write_text(
+        json.dumps({"overall_risk_score": 0, "findings": []}),
+        encoding="utf-8",
+    )
+
+    generated = generate_reports(scan_path, "json", view="summary")
+    payload = json.loads(generated["json"].read_text(encoding="utf-8"))
+
+    assert payload["scan_overview"]["scan_status"] == "Partially Completed"
+    assert payload["scan_overview"]["confidence"] == "Limited"
+    assert payload["scan_overview"]["risk_level"] == "Low based on available results"
+    assert "Resolve failed/timed-out tools and rerun scan." in payload[
+        "recommended_actions"
+    ]
+
+
+def test_summary_marks_scan_partially_completed_when_gowitness_fails(tmp_path) -> None:
+    metadata = create_scan_folder(
+        target="review.example.com",
+        target_type="domain",
+        mode="deep",
+        base_dir=tmp_path / "scans",
+        tools_planned=["httpx", "gowitness"],
+    )
+    metadata["tools_failed"] = [
+        {"tool": "gowitness", "reason": "Command failed with exit code 1"}
+    ]
+    scan_path = Path(metadata["output_dir"])
+    write_scan_metadata(scan_path, metadata)
+    (scan_path / "parsed" / "findings.json").write_text(
+        json.dumps({"overall_risk_score": 0, "findings": []}),
+        encoding="utf-8",
+    )
+
+    generated = generate_reports(scan_path, "json", view="summary")
+    payload = json.loads(generated["json"].read_text(encoding="utf-8"))
+
+    assert payload["scan_overview"]["scan_status"] == "Partially Completed"
+    assert payload["tool_execution_summary"]["failed_tools"] == ["gowitness"]
+
+
+def test_summary_marks_scan_limited_when_nuclei_is_missing(tmp_path) -> None:
+    metadata = create_scan_folder(
+        target="review.example.com",
+        target_type="domain",
+        mode="deep",
+        base_dir=tmp_path / "scans",
+        tools_planned=["httpx", "nuclei"],
+    )
+    metadata["tools_skipped"] = [{"tool": "nuclei", "reason": "Missing external tool"}]
+    scan_path = Path(metadata["output_dir"])
+    write_scan_metadata(scan_path, metadata)
+    (scan_path / "parsed" / "findings.json").write_text(
+        json.dumps({"overall_risk_score": 0, "findings": []}),
+        encoding="utf-8",
+    )
+
+    generated = generate_reports(scan_path, "json", view="summary")
+    payload = json.loads(generated["json"].read_text(encoding="utf-8"))
+
+    assert payload["scan_overview"]["scan_status"] == "Partially Completed"
+    assert payload["scan_overview"]["confidence"] == "Limited"
+    assert "Install nuclei and rerun the scan for template-based vulnerability checks." in payload[
+        "recommended_actions"
+    ]
+
+
+def test_summary_does_not_overstate_low_risk_when_scan_is_incomplete(tmp_path) -> None:
+    metadata = create_scan_folder(
+        target="review.example.com",
+        target_type="domain",
+        mode="deep",
+        base_dir=tmp_path / "scans",
+        tools_planned=["nmap"],
+    )
+    metadata["tools_failed"] = [{"tool": "nmap", "reason": "Command timed out"}]
+    scan_path = Path(metadata["output_dir"])
+    write_scan_metadata(scan_path, metadata)
+    (scan_path / "parsed" / "findings.json").write_text(
+        json.dumps({"overall_risk_score": 0, "findings": []}),
+        encoding="utf-8",
+    )
+
+    generated = generate_reports(scan_path, "json", view="summary")
+    payload = json.loads(generated["json"].read_text(encoding="utf-8"))
+
+    assert payload["scan_overview"]["risk_level"] != "Low"
+    assert payload["scan_overview"]["risk_level"] == "Low based on available results"
     assert all(
-        "nuclei" not in observation["detail"].lower()
-        for observation in payload["security_observations"]
+        "No major security-relevant findings were identified" not in action
+        for action in payload["recommended_actions"]
     )

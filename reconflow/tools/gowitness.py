@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from reconflow.core.runner import run_command
 from reconflow.models.screenshot import Screenshot
 from reconflow.tools.base import ToolAdapter
+from reconflow.tools.jsonl_utils import load_jsonl_records
 
 
 def load_gowitness_targets(live_hosts_path: str | Path) -> list[str]:
@@ -37,9 +38,11 @@ def write_gowitness_input(targets: list[str], output_path: str | Path) -> Path:
 def build_gowitness_command(
     input_path: str | Path,
     screenshots_dir: str | Path,
+    jsonl_output_path: str | Path | None = None,
+    supports_jsonl_file: bool = True,
 ) -> list[str]:
     """Build a Gowitness screenshot command."""
-    return [
+    command = [
         "gowitness",
         "scan",
         "file",
@@ -47,8 +50,12 @@ def build_gowitness_command(
         str(input_path),
         "--screenshot-path",
         str(screenshots_dir),
-        "--disable-db",
     ]
+    if jsonl_output_path is not None:
+        command.append("--write-jsonl")
+        if supports_jsonl_file:
+            command.extend(["--write-jsonl-file", str(jsonl_output_path)])
+    return command
 
 
 def _status_from_record(record: dict[str, Any]) -> str:
@@ -90,6 +97,27 @@ def parse_gowitness_metadata(metadata_path: str | Path) -> list[Screenshot]:
             )
         )
 
+    return screenshots
+
+
+def parse_gowitness_jsonl(
+    jsonl_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[Screenshot]:
+    """Parse Gowitness JSONL metadata into screenshot models."""
+    screenshots: list[Screenshot] = []
+    for record in load_jsonl_records(jsonl_path, parse_warnings):
+        url = str(record.get("url") or record.get("target") or "")
+        parsed_url = urlparse(url)
+        screenshots.append(
+            Screenshot(
+                url=url,
+                host=str(record.get("host") or parsed_url.netloc),
+                screenshot_path=_path_from_record(record),
+                status=_status_from_record(record),
+                source_tool="gowitness",
+            )
+        )
     return screenshots
 
 
@@ -166,10 +194,41 @@ def run_gowitness(
     scan_path = Path(scan_folder)
     screenshots_dir = scan_path / "screenshots"
     input_path = scan_path / "raw" / "gowitness_input.txt"
+    raw_jsonl_path = scan_path / "raw" / "gowitness.jsonl"
     targets = load_gowitness_targets(live_hosts_path)
     write_gowitness_input(targets, input_path)
-    command = build_gowitness_command(input_path, screenshots_dir)
-    return run_command("gowitness", command, timeout=timeout)
+    command = build_gowitness_command(input_path, screenshots_dir, raw_jsonl_path)
+    result = run_command(
+        "gowitness",
+        command,
+        timeout=timeout,
+        stdout_path=scan_path / "raw" / "gowitness.stdout.txt",
+        stderr_path=scan_path / "raw" / "gowitness.stderr.txt",
+    )
+    if _unsupported_jsonl_file_flag(result):
+        fallback_command = build_gowitness_command(
+            input_path,
+            screenshots_dir,
+            raw_jsonl_path,
+            supports_jsonl_file=False,
+        )
+        return run_command(
+            "gowitness",
+            fallback_command,
+            timeout=timeout,
+            stdout_path=scan_path / "raw" / "gowitness.stdout.txt",
+            stderr_path=scan_path / "raw" / "gowitness.stderr.txt",
+        )
+    return result
+
+
+def _unsupported_jsonl_file_flag(result) -> bool:
+    if result.exit_code == 0:
+        return False
+    output = f"{result.stderr}\n{result.stdout}".lower()
+    return "--write-jsonl-file" in output and (
+        "unknown" in output or "flag" in output or "unsupported" in output
+    )
 
 
 class GowitnessTool(ToolAdapter):
@@ -189,5 +248,4 @@ class GowitnessTool(ToolAdapter):
             target,
             "--screenshot-path",
             "screenshots",
-            "--disable-db",
         ]

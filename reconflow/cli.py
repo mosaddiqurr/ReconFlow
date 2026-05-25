@@ -38,6 +38,7 @@ from reconflow.tools.feroxbuster import (
 from reconflow.tools.gowitness import (
     collect_screenshot_metadata,
     load_gowitness_targets,
+    parse_gowitness_jsonl,
     run_gowitness,
     save_screenshots_json,
 )
@@ -59,6 +60,7 @@ from reconflow.tools.nmap import (
     parse_nmap_xml,
     run_nmap,
     save_services_json,
+    select_nmap_targets,
 )
 from reconflow.tools.nuclei import (
     parse_nuclei_jsonl,
@@ -88,6 +90,19 @@ tools_app = typer.Typer(help="Tool integration helpers.")
 app.add_typer(tools_app, name="tools")
 console = Console()
 VALID_RESULT_VIEWS = ("raw", "summary")
+ERROR_SUMMARY_MAX_LINES = 5
+ERROR_SUMMARY_MAX_CHARS = 600
+RAW_RESULT_LIMITS = {
+    "subdomains": 20,
+    "assets": 20,
+    "services": 20,
+    "live_hosts": 20,
+    "technologies": 20,
+    "endpoints": 20,
+    "crawled_urls": 10,
+    "vulnerabilities": 20,
+    "screenshots": 20,
+}
 
 
 def _mark_tool_completed(metadata: dict, tool_name: str) -> None:
@@ -134,6 +149,8 @@ def _record_tool_run(metadata: dict, result) -> None:
             "exit_code": result.exit_code,
             "timed_out": result.timed_out,
             "duration_seconds": result.duration_seconds,
+            "stdout_path": result.stdout_path,
+            "stderr_path": result.stderr_path,
         }
     )
 
@@ -152,6 +169,7 @@ def _parse_with_warnings(
     metadata: dict,
     scan_folder: Path,
     *args,
+    verbose: bool = False,
 ):
     parse_warnings: list[str] = []
     try:
@@ -160,13 +178,14 @@ def _parse_with_warnings(
         try:
             parsed_items = parser(*args)
         except Exception as exc:  # pragma: no cover - exercised through CLI tests
-            return _handle_parser_exception(tool_name, exc, metadata, scan_folder)
+            return _handle_parser_exception(tool_name, exc, metadata, scan_folder, verbose)
     except Exception as exc:
-        return _handle_parser_exception(tool_name, exc, metadata, scan_folder)
+        return _handle_parser_exception(tool_name, exc, metadata, scan_folder, verbose)
 
     for warning in parse_warnings:
         _mark_tool_parse_warning(metadata, tool_name, warning)
-        _print_parse_warning(tool_name, warning)
+        if verbose:
+            _print_parse_warning(tool_name, warning)
     if parse_warnings:
         write_scan_metadata(scan_folder, metadata)
     return parsed_items
@@ -177,12 +196,39 @@ def _handle_parser_exception(
     exc: Exception,
     metadata: dict,
     scan_folder: Path,
+    verbose: bool = False,
 ) -> list:
     message = f"Parser failed safely: {exc.__class__.__name__}"
     _mark_tool_parse_warning(metadata, tool_name, message)
     write_scan_metadata(scan_folder, metadata)
-    _print_parse_warning(tool_name, message)
+    if verbose:
+        _print_parse_warning(tool_name, message)
     return []
+
+
+def _persist_tool_streams(scan_folder: Path, result) -> None:
+    raw_dir = scan_folder / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    if result.stderr and not result.stderr_path:
+        stderr_path = raw_dir / f"{result.tool_name}.stderr.txt"
+        stderr_path.write_text(result.stderr, encoding="utf-8")
+        result.stderr_path = str(stderr_path)
+    if result.stdout and not result.stdout_path:
+        stdout_path = raw_dir / f"{result.tool_name}.stdout.txt"
+        stdout_path.write_text(result.stdout, encoding="utf-8")
+        result.stdout_path = str(stdout_path)
+
+
+def _error_summary(text: str) -> str:
+    if not text:
+        return "-"
+    lines = text.strip().splitlines()
+    summary = "\n".join(lines[:ERROR_SUMMARY_MAX_LINES]).strip()
+    if len(summary) > ERROR_SUMMARY_MAX_CHARS:
+        summary = summary[:ERROR_SUMMARY_MAX_CHARS].rstrip()
+    if len(lines) > ERROR_SUMMARY_MAX_LINES or len(text.strip()) > len(summary):
+        summary = f"{summary}\n..."
+    return summary
 
 
 def _top_technologies_by_host(technologies: list) -> str:
@@ -267,12 +313,86 @@ def _print_step_progress(tool_name: str, status: str, detail: str = "") -> None:
     console.print(Panel.fit(message, title="Step Progress"))
 
 
-def _print_missing_tool(tool_check, decision: WorkflowDecision) -> None:
+def _print_minimal_progress(index: int, total: int, tool_name: str, status: str) -> None:
+    console.print(f"[{index}/{total}] {tool_name} {status}", markup=False)
+
+
+def _result_status(result) -> str:
+    if result.timed_out:
+        return "timed out"
+    if result.exit_code == 127:
+        return "missing"
+    if result.exit_code != 0:
+        return "failed"
+    return "completed"
+
+
+def _finalize_completed_tool(
+    metadata: dict,
+    scan_folder: Path,
+    tool_name: str,
+    step_index: int,
+    total_steps: int,
+    verbose: bool,
+    dry_run: bool = False,
+) -> None:
+    _mark_tool_completed(metadata, tool_name)
+    write_scan_metadata(scan_folder, metadata)
+    if dry_run:
+        return
+    if verbose:
+        _print_step_progress(tool_name, "Completed")
+    else:
+        _print_minimal_progress(step_index, total_steps, tool_name, "completed")
+
+
+def _finalize_skipped_tool(
+    metadata: dict,
+    scan_folder: Path,
+    decision: WorkflowDecision,
+    step_index: int,
+    total_steps: int,
+    verbose: bool,
+    dry_run: bool,
+    explain: bool,
+) -> None:
+    _mark_tool_skipped(metadata, decision.tool_name, decision.skip_reason)
+    write_scan_metadata(scan_folder, metadata)
+    if verbose or dry_run or explain:
+        _print_skipped_step(decision)
+    if not dry_run and not verbose and not explain:
+        _print_minimal_progress(step_index, total_steps, decision.tool_name, "skipped")
+
+
+def _print_result_progress(
+    result,
+    step_index: int,
+    total_steps: int,
+    verbose: bool,
+    dry_run: bool,
+) -> None:
+    if not dry_run and not verbose:
+        _print_minimal_progress(
+            step_index,
+            total_steps,
+            result.tool_name,
+            _result_status(result),
+        )
+
+
+def _print_missing_tool(tool_check, decision: WorkflowDecision, result=None) -> None:
     table = Table(title="Missing External Tool")
     table.add_column("Field", style="bold")
     table.add_column("Value")
     table.add_row("Tool", tool_check.tool.name)
     table.add_row("Why Needed", decision.reason)
+    if result is not None:
+        table.add_row("Exit Code", str(result.exit_code))
+        table.add_row("Timed Out", str(result.timed_out))
+        if result.stderr:
+            table.add_row("Error Summary", _error_summary(result.stderr))
+        if result.stderr_path:
+            table.add_row("Full Stderr Path", result.stderr_path)
     table.add_row("Install Note", tool_check.tool.install_note)
     table.add_row("Action", "Skipped")
     console.print(table)
@@ -288,7 +408,11 @@ def _print_tool_failure(result, decision: WorkflowDecision) -> None:
     table.add_row("Timed Out", str(result.timed_out))
     table.add_row("Action", "Skipped downstream parsing for this tool")
     if result.stderr:
-        table.add_row("Error", result.stderr.strip())
+        table.add_row("Error Summary", _error_summary(result.stderr))
+    if result.stderr_path:
+        table.add_row("Full Stderr Path", result.stderr_path)
+    if result.stdout_path:
+        table.add_row("Full Stdout Path", result.stdout_path)
     console.print(table)
 
 
@@ -308,29 +432,33 @@ def _tool_result_ok(
     metadata: dict,
     scan_folder: Path,
     tool_checks: dict,
+    verbose: bool = False,
 ) -> bool:
+    _persist_tool_streams(scan_folder, result)
     _record_tool_run(metadata, result)
     if result.timed_out:
         reason = "Command timed out"
         _mark_tool_failed(metadata, result.tool_name, reason)
         write_scan_metadata(scan_folder, metadata)
-        _print_tool_failure(result, decision)
+        if verbose:
+            _print_tool_failure(result, decision)
         return False
     if result.exit_code == 127:
         reason = "Missing external tool"
         _mark_tool_skipped(metadata, result.tool_name, reason)
         write_scan_metadata(scan_folder, metadata)
         tool_check = tool_checks.get(result.tool_name)
-        if tool_check is not None:
-            _print_missing_tool(tool_check, decision)
-        else:
+        if verbose and tool_check is not None:
+            _print_missing_tool(tool_check, decision, result)
+        elif verbose:
             _print_tool_failure(result, decision)
         return False
     if result.exit_code != 0:
         reason = f"Command failed with exit code {result.exit_code}"
         _mark_tool_failed(metadata, result.tool_name, reason)
         write_scan_metadata(scan_folder, metadata)
-        _print_tool_failure(result, decision)
+        if verbose:
+            _print_tool_failure(result, decision)
         return False
     return True
 
@@ -389,75 +517,73 @@ def _print_comparison_tables(comparison: dict) -> None:
 
 def render_raw_cli_results(context: dict) -> None:
     """Render detailed tool-by-tool scan results."""
-    console.print(Panel.fit("Raw Scan Results", style="bold cyan"))
+    console.print("[bold cyan]Raw Scan Results[/bold cyan]")
     overview = context["scan_overview"]
-    overview_table = Table(title="Scan Overview")
+    overview_table = Table(title="Scan Metadata")
     overview_table.add_column("Field", style="bold")
     overview_table.add_column("Value")
     overview_table.add_row("Target", overview["target"])
     overview_table.add_row("Target Type", overview["target_type"])
     overview_table.add_row("Scan Mode", overview["scan_mode"])
+    overview_table.add_row("Scan Status", overview["scan_status"])
+    overview_table.add_row("Confidence", overview["confidence"])
     overview_table.add_row("Overall Risk Score", str(overview["overall_risk_score"]))
     overview_table.add_row("Risk Level", overview["risk_level"])
     console.print(overview_table)
 
-    console.print(Panel.fit("Tool Results", style="bold"))
+    console.print("\n[bold]Tool-by-Tool Results[/bold]")
     for tool in context["tool_results"]:
-        details = Table.grid(padding=(0, 1))
-        details.add_column(style="bold")
-        details.add_column()
-        details.add_row("Status", tool["status"])
-        details.add_row("Why", tool["why"])
+        console.print(f"\n[bold]Tool {tool['index']}: {tool['tool']}[/bold]")
+        console.print(f"Tool: {tool['tool']}")
+        console.print(f"Status: {tool['status']}")
+        console.print(f"Reason: {tool['why']}")
         if tool["parse_warnings"]:
-            details.add_row("Parse Warning", "; ".join(tool["parse_warnings"]))
-        details.add_row("Command", tool["command_summary"])
-        details.add_row("Raw Output", tool["raw_output_path"])
-        details.add_row("Parsed Output", tool["parsed_output_path"])
-        console.print(Panel(details, title=f"Tool {tool['index']}: {tool['tool']}"))
+            console.print(f"Parse Warning: {'; '.join(tool['parse_warnings'])}")
+        if tool["command_summary"] != "-":
+            console.print(f"Command: {tool['command_summary']}")
+        console.print("Results:")
         _render_raw_tool_data(tool)
+        console.print("Artifacts:")
+        console.print(f"- Raw: {tool['raw_output_path']}")
+        console.print(f"- Parsed: {tool['parsed_output_path']}")
 
     _render_correlated_findings(context["correlated_findings"])
-    risk_table = Table(title="Overall Risk Score")
-    risk_table.add_column("Score", justify="right")
-    risk_table.add_column("Level")
-    risk_table.add_row(
-        str(context["overall_risk_score"]),
-        context["risk_level"],
+    console.print(
+        f"\n[bold]Overall Risk Score:[/bold] "
+        f"{context['overall_risk_score']}/100 ({context['risk_level']})"
     )
-    console.print(risk_table)
     _render_report_paths(context["report_paths"])
 
 
 def render_summary_cli_results(context: dict) -> None:
     """Render a concise executive-style scan summary."""
-    console.print(Panel.fit("Summary Scan Results", style="bold cyan"))
+    console.print("[bold cyan]Summary Scan Results[/bold cyan]")
     overview = context["scan_overview"]
-    overview_table = Table(title="Scan Overview")
+    overview_table = Table(title="Scan Result")
     overview_table.add_column("Field", style="bold")
     overview_table.add_column("Value")
     overview_table.add_row("Target", overview["target"])
-    overview_table.add_row("Target Type", overview["target_type"])
-    overview_table.add_row("Scan Mode", overview["scan_mode"])
-    overview_table.add_row("Scan Time", overview["scan_time"])
-    overview_table.add_row("Overall Risk Score", str(overview["overall_risk_score"]))
-    overview_table.add_row("Risk Level", overview["risk_level"])
+    overview_table.add_row("Mode", overview["scan_mode"])
+    overview_table.add_row("Scan Status", overview["scan_status"])
+    overview_table.add_row("Confidence", overview["confidence"])
+    overview_table.add_row("Risk", overview["risk_level"])
+    overview_table.add_row("Reports generated", "Summary and raw reports")
     console.print(overview_table)
 
-    if context["key_findings"]["items"]:
-        key_table = Table(title="Key Findings")
-        key_table.add_column("Finding")
-        for item in context["key_findings"]["items"]:
-            key_table.add_row(item)
-        console.print(key_table)
+    if context["what_was_found"]["items"]:
+        found_table = Table(title="What Was Found")
+        found_table.add_column("Finding", style="bold")
+        found_table.add_column("Count", justify="right")
+        for item in context["what_was_found"]["items"]:
+            found_table.add_row(item["label"], str(item["count"]))
+        console.print(found_table)
 
-    if context["security_observations"]:
-        observations_table = Table(title="Security-Relevant Observations")
-        observations_table.add_column("Type", style="bold")
+    if context["important_observations"]:
+        observations_table = Table(title="Important Observations")
         observations_table.add_column("Observation")
-        for observation in context["security_observations"]:
+        for observation in context["important_observations"]:
             observations_table.add_row(
-                observation["type"],
-                f"{observation['title']} - {observation['detail']}",
+                f"{observation['title']} - {observation['detail']}"
             )
         console.print(observations_table)
 
@@ -476,7 +602,7 @@ def render_summary_cli_results(context: dict) -> None:
         console.print(vulnerability_table)
 
     if context["correlated_findings"]:
-        correlated_table = Table(title="Correlated Risk Findings")
+        correlated_table = Table(title="Correlated Findings")
         correlated_table.add_column("Severity", style="bold")
         correlated_table.add_column("Finding")
         correlated_table.add_column("Affected")
@@ -489,6 +615,9 @@ def render_summary_cli_results(context: dict) -> None:
                 str(finding["risk_score"]),
             )
         console.print(correlated_table)
+
+    if context["issues_during_scan"]["has_issues"]:
+        _render_summary_issues(context["issues_during_scan"])
 
     actions_table = Table(title="Recommended Next Actions")
     actions_table.add_column("Action")
@@ -522,106 +651,168 @@ def render_summary_cli_results(context: dict) -> None:
 
 def _render_raw_tool_data(tool: dict) -> None:
     if tool["result_count"] == 0:
-        console.print("[dim]No results found[/dim]")
+        console.print("- No results found")
         return
 
     result_type = tool["result_type"]
     if result_type == "subdomains":
-        table = Table(title="Discovered Subdomains")
-        table.add_column("Subdomain")
-        for subdomain in tool["results"]:
-            table.add_row(str(subdomain))
+        lines = [str(subdomain) for subdomain in tool["results"]]
     elif result_type == "assets":
-        table = Table(title="Resolved Assets")
-        table.add_column("Hostname")
-        table.add_column("IP")
-        table.add_column("Record Type")
-        for asset in tool["results"]:
-            table.add_row(
-                str(asset.get("hostname", "-")),
-                str(asset.get("ip") or "-"),
-                str(asset.get("record_type") or "-"),
+        lines = [
+            (
+                f"{asset.get('hostname', '-')} -> "
+                f"{asset.get('ip') or '-'} ({asset.get('record_type') or '-'})"
             )
+            for asset in tool["results"]
+        ]
     elif result_type == "services":
-        table = Table(title="Open Ports and Services")
-        table.add_column("Host")
-        table.add_column("Port")
-        table.add_column("Service")
-        table.add_column("Product")
-        for service in tool["results"]:
-            table.add_row(
-                str(service.get("host", "-")),
-                f"{service.get('port', '-')}/{service.get('protocol', 'tcp')}",
-                str(service.get("service_name") or "-"),
-                str(service.get("product") or "-"),
-            )
+        lines = [
+            (
+                f"{service.get('host', '-')} "
+                f"{service.get('protocol', 'tcp')}/{service.get('port', '-')} "
+                f"{service.get('service_name') or '-'} "
+                f"{service.get('product') or ''}"
+            ).strip()
+            for service in tool["results"]
+        ]
     elif result_type == "live_hosts":
-        table = Table(title="Live Web Services")
-        table.add_column("URL")
-        table.add_column("Status")
-        table.add_column("Title")
-        table.add_column("Technologies")
-        for host in tool["results"]:
-            table.add_row(
-                str(host.get("url", "-")),
-                str(host.get("status_code") or "-"),
-                str(host.get("title") or "-"),
-                ", ".join(host.get("technologies") or []) or "-",
-            )
+        lines = [
+            (
+                f"{host.get('url', '-')} [{host.get('status_code') or '-'}] "
+                f"{host.get('title') or ''} "
+                f"{', '.join(host.get('technologies') or [])}"
+            ).strip()
+            for host in tool["results"]
+        ]
     elif result_type == "technologies":
-        table = Table(title="Technologies Detected")
-        table.add_column("Host")
-        table.add_column("Technology")
-        table.add_column("Version")
-        table.add_column("Category")
-        for technology in tool["results"]:
-            table.add_row(
-                str(technology.get("host", "-")),
-                str(technology.get("name", "-")),
-                str(technology.get("version") or "-"),
-                str(technology.get("category") or "-"),
+        lines = [
+            (
+                f"{technology.get('host', '-')}: {technology.get('name', '-')}"
+                f"{_value_suffix(technology.get('version'))}"
+                f"{_category_suffix(technology.get('category'))}"
             )
+            for technology in tool["results"]
+        ]
     elif result_type == "endpoints":
-        table = Table(title="Endpoints Discovered")
-        table.add_column("URL")
-        table.add_column("Status")
-        table.add_column("Interesting")
-        for endpoint in tool["results"]:
-            table.add_row(
-                str(endpoint.get("url", "-")),
-                str(endpoint.get("status_code") or "-"),
-                str(endpoint.get("interesting", False)),
+        lines = [
+            (
+                f"{endpoint.get('url', '-')} [{endpoint.get('status_code') or '-'}]"
+                f"{' [interesting]' if endpoint.get('interesting') else ''}"
             )
+            for endpoint in tool["results"]
+        ]
     elif result_type == "crawled_urls":
-        table = Table(title="Crawled URLs")
-        table.add_column("URL")
-        table.add_column("Path")
-        for crawled_url in tool["results"]:
-            table.add_row(
-                str(crawled_url.get("url", "-")),
-                str(crawled_url.get("path") or "-"),
-            )
+        _render_grouped_crawled_urls(tool)
+        return
     elif result_type == "vulnerabilities":
-        table = Table(title="Vulnerability Summary")
-        table.add_column("Severity")
-        table.add_column("Count", justify="right")
+        lines = []
         for severity, vulnerabilities in tool["vulnerabilities_by_severity"].items():
-            table.add_row(f"{severity} Findings", str(len(vulnerabilities)))
+            for vulnerability in vulnerabilities:
+                lines.append(
+                    (
+                        f"{severity}: {vulnerability.get('name', '-')} on "
+                        f"{vulnerability.get('matched_url') or vulnerability.get('host', '-')}"
+                    )
+                )
     elif result_type == "screenshots":
-        table = Table(title="Screenshots Captured")
-        table.add_column("URL")
-        table.add_column("Screenshot Path")
-        table.add_column("Status")
-        for screenshot in tool["results"]:
-            table.add_row(
-                str(screenshot.get("url", "-")),
-                str(screenshot.get("screenshot_path") or "-"),
-                str(screenshot.get("status") or "-"),
+        lines = [
+            (
+                f"{screenshot.get('url', '-')} -> "
+                f"{screenshot.get('screenshot_path') or 'missing'} "
+                f"({screenshot.get('status') or '-'})"
             )
+            for screenshot in tool["results"]
+        ]
     else:
-        console.print("[dim]No results found[/dim]")
+        console.print("- No results found")
         return
 
+    _render_limited_lines(
+        lines,
+        RAW_RESULT_LIMITS.get(result_type, 20),
+        tool["result_count"],
+        tool["parsed_output_path"],
+    )
+
+
+def _render_limited_lines(
+    lines: list[str],
+    limit: int,
+    total: int,
+    full_results_path: str,
+) -> None:
+    for line in lines[:limit]:
+        console.print(f"- {line}")
+    if total > limit:
+        console.print(
+            f"Showing {limit} of {total} results. "
+            f"Full results saved to {full_results_path}"
+        )
+
+
+def _render_grouped_crawled_urls(tool: dict) -> None:
+    groups = tool.get("url_groups") or {}
+    rendered = 0
+    limit = RAW_RESULT_LIMITS["crawled_urls"]
+    labels = [
+        ("Pages", groups.get("pages", [])),
+        ("API-like endpoints", groups.get("api_like", [])),
+        ("Static assets", groups.get("static_assets", [])),
+    ]
+    for label, items in labels:
+        if not items or rendered >= limit:
+            continue
+        console.print(f"{label}:")
+        remaining = limit - rendered
+        for item in items[:remaining]:
+            console.print(f"- {item.get('url', '-')}")
+        rendered += min(len(items), remaining)
+    if tool["result_count"] > limit:
+        console.print(
+            f"Showing {limit} of {tool['result_count']} results. "
+            f"Full results saved to {tool['parsed_output_path']}"
+        )
+
+
+def _value_suffix(value) -> str:
+    if value is None or value == "":
+        return ""
+    return f" {value}"
+
+
+def _category_suffix(value) -> str:
+    if value is None or value == "":
+        return ""
+    return f" ({value})"
+
+
+def _render_summary_issues(issues: dict) -> None:
+    table = Table(title="Issues During Scan")
+    table.add_column("Group", style="bold")
+    table.add_column("Details")
+    for label, key in (
+        ("Timed out", "timed_out"),
+        ("Missing", "missing"),
+        ("Failed", "failed"),
+    ):
+        entries = issues.get(key, [])
+        if not entries:
+            continue
+        details = []
+        for item in entries:
+            stderr_path = item.get("stderr_path")
+            suffix = f" Full error saved to {stderr_path}" if stderr_path else ""
+            details.append(f"{item.get('tool', '-')}: {item.get('reason', '-')}.{suffix}")
+        table.add_row(label, "\n".join(details))
+    parse_warnings = issues.get("parse_warnings", [])
+    if parse_warnings:
+        table.add_row(
+            "Parse warnings",
+            "\n".join(
+                f"{item.get('tool', '-')}: {item.get('message', '-')}"
+                for item in parse_warnings
+            ),
+        )
     console.print(table)
 
 
@@ -645,13 +836,11 @@ def _render_correlated_findings(findings: list) -> None:
 
 
 def _render_report_paths(report_paths: dict) -> None:
-    report_table = Table(title="Report Paths")
-    report_table.add_column("Report", style="bold")
-    report_table.add_column("Path")
-    report_table.add_row("Raw", report_paths["raw_report"])
-    report_table.add_row("Summary", report_paths["summary_report"])
-    report_table.add_row("JSON", report_paths["json_report"])
-    console.print(report_table)
+    console.print("\n[bold]Reports saved:[/bold]")
+    console.print(
+        f"- Summary: {report_paths.get('summary_html_report', 'reports/report_summary.html')}"
+    )
+    console.print(f"- Raw: {report_paths.get('raw_html_report', 'reports/report_raw.html')}")
 
 
 @app.callback()
@@ -684,9 +873,14 @@ def scan(
         help="Wordlist for Feroxbuster content discovery.",
     ),
     view: str = typer.Option(
-        "raw",
+        "summary",
         "--view",
         help="Result view for terminal output: raw or summary.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Show detailed execution progress, decisions, and command issues.",
     ),
 ) -> None:
     """Validate and prepare a placeholder recon scan workflow for a target."""
@@ -739,8 +933,9 @@ def scan(
     )
     scan_folder = Path(metadata["output_dir"])
     tool_checks = {result.tool.name: result for result in check_required_tools()}
-    _print_target_summary(scan_target, selected_mode, scan_folder)
-    _print_workflow_summary(workflow_steps)
+    if dry_run or explain or verbose:
+        _print_target_summary(scan_target, selected_mode, scan_folder)
+        _print_workflow_summary(workflow_steps)
     selected_wordlist_path = wordlist or config.wordlist_path
     raw_subfinder_path = scan_folder / "raw" / "subfinder.txt"
     parsed_subdomains_path = scan_folder / "parsed" / "subdomains.json"
@@ -779,22 +974,32 @@ def scan(
     nuclei_result = None
     vulnerabilities = []
     screenshots_dir = scan_folder / "screenshots"
+    raw_gowitness_jsonl_path = scan_folder / "raw" / "gowitness.jsonl"
     parsed_screenshots_path = scan_folder / "parsed" / "screenshots.json"
     gowitness_result = None
     screenshots = []
 
-    for workflow_step in workflow_steps:
+    total_steps = len(workflow_steps)
+    for step_index, workflow_step in enumerate(workflow_steps, start=1):
         tool_name = workflow_step.name
         decision = orchestrator.decide(tool_name, workflow_state)
         _record_tool_decision(metadata, decision)
         if explain:
             _print_workflow_decision(decision)
         if not decision.should_run:
-            _mark_tool_skipped(metadata, tool_name, decision.skip_reason)
-            write_scan_metadata(scan_folder, metadata)
-            _print_skipped_step(decision)
+            _finalize_skipped_tool(
+                metadata,
+                scan_folder,
+                decision,
+                step_index,
+                total_steps,
+                verbose,
+                dry_run,
+                explain,
+            )
             continue
-        _print_step_progress(tool_name, "Ready", decision.reason)
+        if verbose:
+            _print_step_progress(tool_name, "Ready", decision.reason)
 
         if tool_name == "subfinder":
             if dry_run:
@@ -815,14 +1020,28 @@ def scan(
                 metadata,
                 scan_folder,
                 tool_checks,
+                verbose,
             ):
+                _print_result_progress(
+                    subfinder_result,
+                    step_index,
+                    total_steps,
+                    verbose,
+                    dry_run,
+                )
                 continue
             if subfinder_result.exit_code == 0 and raw_subfinder_path.exists():
                 subdomains = parse_subfinder_output(raw_subfinder_path)
                 workflow_state.subdomains = subdomains
                 save_subdomains_json(subdomains, parsed_subdomains_path)
-                _mark_tool_completed(metadata, "subfinder")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "subfinder",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "dnsx":
             if dry_run:
@@ -838,7 +1057,15 @@ def scan(
                 subdomains,
                 timeout=config.tool_timeouts.get("dnsx"),
             )
-            if not _tool_result_ok(dnsx_result, decision, metadata, scan_folder, tool_checks):
+            if not _tool_result_ok(
+                dnsx_result,
+                decision,
+                metadata,
+                scan_folder,
+                tool_checks,
+                verbose,
+            ):
+                _print_result_progress(dnsx_result, step_index, total_steps, verbose, dry_run)
                 continue
             if dnsx_result.exit_code == 0 and raw_dnsx_path.exists():
                 assets = _parse_with_warnings(
@@ -847,24 +1074,41 @@ def scan(
                     metadata,
                     scan_folder,
                     raw_dnsx_path,
+                    verbose=verbose,
                 )
                 workflow_state.resolved_hosts = [
                     asset.hostname for asset in assets if asset.is_resolved
                 ]
+                metadata["resolved_hostnames"] = sorted(
+                    {asset.hostname for asset in assets if asset.is_resolved}
+                )
                 save_assets_json(assets, parsed_assets_path)
-                _mark_tool_completed(metadata, "dnsx")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "dnsx",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "nmap":
-            nmap_targets = (
+            nmap_targets = select_nmap_targets(
+                scan_target.value,
+                assets if selected_mode == "deep" and workflow_state.resolved_hosts else None,
                 workflow_state.resolved_hosts
                 if selected_mode == "deep" and workflow_state.resolved_hosts
-                else scan_target.value
+                else None,
             )
+            metadata["nmap_target_context"] = {
+                "original_target": scan_target.value,
+                "scan_targets": nmap_targets,
+                "resolved_hostnames": sorted(set(workflow_state.resolved_hosts)),
+            }
             nmap_command = build_nmap_command(nmap_targets, raw_nmap_path)
             nmap_run_target = (
                 nmap_targets[0]
-                if isinstance(nmap_targets, list) and len(nmap_targets) == 1
+                if len(nmap_targets) == 1
                 else nmap_targets
             )
             if dry_run:
@@ -879,7 +1123,15 @@ def scan(
                 scan_folder,
                 timeout=config.tool_timeouts.get("nmap"),
             )
-            if not _tool_result_ok(nmap_result, decision, metadata, scan_folder, tool_checks):
+            if not _tool_result_ok(
+                nmap_result,
+                decision,
+                metadata,
+                scan_folder,
+                tool_checks,
+                verbose,
+            ):
+                _print_result_progress(nmap_result, step_index, total_steps, verbose, dry_run)
                 continue
             if nmap_result.exit_code == 0 and raw_nmap_path.exists():
                 services = parse_nmap_xml(raw_nmap_path)
@@ -889,8 +1141,14 @@ def scan(
                     if service.port in {80, 443, 8080, 8443, 8000, 8888}
                 ]
                 save_services_json(services, parsed_services_path)
-                _mark_tool_completed(metadata, "nmap")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "nmap",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "httpx":
             resolved_hosts = workflow_state.resolved_hosts
@@ -914,7 +1172,15 @@ def scan(
                 resolved_hosts=resolved_hosts,
                 timeout=config.tool_timeouts.get("httpx"),
             )
-            if not _tool_result_ok(httpx_result, decision, metadata, scan_folder, tool_checks):
+            if not _tool_result_ok(
+                httpx_result,
+                decision,
+                metadata,
+                scan_folder,
+                tool_checks,
+                verbose,
+            ):
+                _print_result_progress(httpx_result, step_index, total_steps, verbose, dry_run)
                 continue
             if httpx_result.exit_code == 0 and raw_httpx_path.exists():
                 live_hosts = _parse_with_warnings(
@@ -923,11 +1189,18 @@ def scan(
                     metadata,
                     scan_folder,
                     raw_httpx_path,
+                    verbose=verbose,
                 )
                 workflow_state.live_hosts = [live_host.url for live_host in live_hosts]
                 save_live_hosts_json(live_hosts, parsed_live_hosts_path)
-                _mark_tool_completed(metadata, "httpx")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "httpx",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "whatweb":
             if dry_run:
@@ -948,13 +1221,27 @@ def scan(
                 metadata,
                 scan_folder,
                 tool_checks,
+                verbose,
             ):
+                _print_result_progress(
+                    whatweb_result,
+                    step_index,
+                    total_steps,
+                    verbose,
+                    dry_run,
+                )
                 continue
             if whatweb_result.exit_code == 0 and raw_whatweb_path.exists():
                 technologies = parse_whatweb_json(raw_whatweb_path)
                 save_technologies_json(technologies, parsed_technologies_path)
-                _mark_tool_completed(metadata, "whatweb")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "whatweb",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "feroxbuster":
             if dry_run:
@@ -978,7 +1265,15 @@ def scan(
                 metadata,
                 scan_folder,
                 tool_checks,
+                verbose,
             ):
+                _print_result_progress(
+                    feroxbuster_result,
+                    step_index,
+                    total_steps,
+                    verbose,
+                    dry_run,
+                )
                 continue
             if feroxbuster_result.exit_code == 0 and raw_feroxbuster_path.exists():
                 endpoints = _parse_with_warnings(
@@ -987,10 +1282,17 @@ def scan(
                     metadata,
                     scan_folder,
                     raw_feroxbuster_path,
+                    verbose=verbose,
                 )
                 save_endpoints_json(endpoints, parsed_endpoints_path)
-                _mark_tool_completed(metadata, "feroxbuster")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "feroxbuster",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "katana":
             if dry_run:
@@ -1006,7 +1308,15 @@ def scan(
                 parsed_live_hosts_path,
                 timeout=config.tool_timeouts.get("katana"),
             )
-            if not _tool_result_ok(katana_result, decision, metadata, scan_folder, tool_checks):
+            if not _tool_result_ok(
+                katana_result,
+                decision,
+                metadata,
+                scan_folder,
+                tool_checks,
+                verbose,
+            ):
+                _print_result_progress(katana_result, step_index, total_steps, verbose, dry_run)
                 continue
             if katana_result.exit_code == 0 and raw_katana_path.exists():
                 crawled_urls = _parse_with_warnings(
@@ -1015,14 +1325,21 @@ def scan(
                     metadata,
                     scan_folder,
                     raw_katana_path,
+                    verbose=verbose,
                 )
                 save_crawled_urls_json(crawled_urls, parsed_crawled_urls_path)
                 endpoints = merge_interesting_crawled_urls_into_endpoints(
                     crawled_urls,
                     parsed_endpoints_path,
                 )
-                _mark_tool_completed(metadata, "katana")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "katana",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "nuclei":
             if dry_run:
@@ -1038,7 +1355,15 @@ def scan(
                 parsed_live_hosts_path,
                 timeout=config.tool_timeouts.get("nuclei"),
             )
-            if not _tool_result_ok(nuclei_result, decision, metadata, scan_folder, tool_checks):
+            if not _tool_result_ok(
+                nuclei_result,
+                decision,
+                metadata,
+                scan_folder,
+                tool_checks,
+                verbose,
+            ):
+                _print_result_progress(nuclei_result, step_index, total_steps, verbose, dry_run)
                 continue
             if nuclei_result.exit_code == 0 and raw_nuclei_path.exists():
                 vulnerabilities = _parse_with_warnings(
@@ -1047,13 +1372,20 @@ def scan(
                     metadata,
                     scan_folder,
                     raw_nuclei_path,
+                    verbose=verbose,
                 )
                 save_vulnerabilities_json(
                     vulnerabilities,
                     parsed_vulnerabilities_path,
                 )
-                _mark_tool_completed(metadata, "nuclei")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "nuclei",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
         elif tool_name == "gowitness":
             if dry_run:
@@ -1075,17 +1407,41 @@ def scan(
                 metadata,
                 scan_folder,
                 tool_checks,
+                verbose,
             ):
+                _print_result_progress(
+                    gowitness_result,
+                    step_index,
+                    total_steps,
+                    verbose,
+                    dry_run,
+                )
                 continue
             if gowitness_result.exit_code == 0:
                 gowitness_targets = load_gowitness_targets(parsed_live_hosts_path)
-                screenshots = collect_screenshot_metadata(
-                    gowitness_targets,
-                    screenshots_dir,
-                )
+                if raw_gowitness_jsonl_path.exists():
+                    screenshots = _parse_with_warnings(
+                        "gowitness",
+                        parse_gowitness_jsonl,
+                        metadata,
+                        scan_folder,
+                        raw_gowitness_jsonl_path,
+                        verbose=verbose,
+                    )
+                if not screenshots:
+                    screenshots = collect_screenshot_metadata(
+                        gowitness_targets,
+                        screenshots_dir,
+                    )
                 save_screenshots_json(screenshots, parsed_screenshots_path)
-                _mark_tool_completed(metadata, "gowitness")
-                write_scan_metadata(scan_folder, metadata)
+                _finalize_completed_tool(
+                    metadata,
+                    scan_folder,
+                    "gowitness",
+                    step_index,
+                    total_steps,
+                    verbose,
+                )
 
     correlation_result = correlate_scan(scan_folder)
     findings = correlation_result.findings

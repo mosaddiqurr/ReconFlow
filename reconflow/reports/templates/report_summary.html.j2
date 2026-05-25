@@ -17,9 +17,9 @@
         border-bottom: 1px solid #e5e7eb;
         padding: 16px 0;
       }
-      .overview {
+      .grid {
         display: grid;
-        gap: 8px 24px;
+        gap: 12px 24px;
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       }
       .label {
@@ -39,34 +39,34 @@
     <p><strong>Scan ID:</strong> {{ scan_id }}</p>
 
     <section>
-      <h2>Scan Overview</h2>
-      <div class="overview">
+      <h2>Scan Result</h2>
+      <div class="grid">
         <div><div class="label">Target</div><div class="value">{{ scan_overview.target }}</div></div>
-        <div><div class="label">Target type</div><div class="value">{{ scan_overview.target_type }}</div></div>
-        <div><div class="label">Scan mode</div><div class="value">{{ scan_overview.scan_mode }}</div></div>
-        <div><div class="label">Scan time</div><div class="value">{{ scan_overview.scan_time }}</div></div>
-        <div><div class="label">Overall risk score</div><div class="value">{{ scan_overview.overall_risk_score }}/100</div></div>
-        <div><div class="label">Risk level</div><div class="value">{{ scan_overview.risk_level }}</div></div>
+        <div><div class="label">Mode</div><div class="value">{{ scan_overview.scan_mode }}</div></div>
+        <div><div class="label">Scan status</div><div class="value">{{ scan_overview.scan_status }}</div></div>
+        <div><div class="label">Confidence</div><div class="value">{{ scan_overview.confidence }}</div></div>
+        <div><div class="label">Risk</div><div class="value">{{ scan_overview.risk_level }}</div></div>
+        <div><div class="label">Reports generated</div><div class="value">Summary and raw reports</div></div>
       </div>
     </section>
 
-    {% if key_findings["items"] %}
+    {% if what_was_found["items"] %}
     <section>
-      <h2>Key Findings</h2>
+      <h2>What Was Found</h2>
       <ul>
-        {% for item in key_findings["items"] %}
-        <li>{{ item }}</li>
+        {% for item in what_was_found["items"] %}
+        <li><strong>{{ item.label }}:</strong> {{ item.count }}</li>
         {% endfor %}
       </ul>
     </section>
     {% endif %}
 
-    {% if security_observations %}
+    {% if important_observations %}
     <section>
-      <h2>Security-Relevant Observations</h2>
+      <h2>Important Observations</h2>
       <ul>
-        {% for observation in security_observations %}
-        <li><strong>{{ observation.type }}:</strong> {{ observation.title }} - {{ observation.detail }}</li>
+        {% for observation in important_observations %}
+        <li><strong>{{ observation.title }}:</strong> {{ observation.detail }}</li>
         {% endfor %}
       </ul>
     </section>
@@ -88,10 +88,30 @@
 
     {% if correlated_findings %}
     <section>
-      <h2>Correlated Risk Findings</h2>
+      <h2>Correlated Findings</h2>
       <ul>
         {% for finding in correlated_findings %}
         <li><strong>{{ finding.severity }}:</strong> {{ finding.title }} affecting {{ finding.affected }} (risk score {{ finding.risk_score }}). {{ finding.explanation }} Recommended action: {{ finding.recommended_action }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if issues_during_scan.has_issues %}
+    <section>
+      <h2>Issues During Scan</h2>
+      <ul>
+        {% for item in issues_during_scan.timed_out %}
+        <li><strong>Timed out:</strong> {{ item.tool }} - {{ item.reason }}. Full error saved to {{ item.stderr_path }}</li>
+        {% endfor %}
+        {% for item in issues_during_scan.missing %}
+        <li><strong>Missing:</strong> {{ item.tool }} - {{ item.reason }}. Full error saved to {{ item.stderr_path }}</li>
+        {% endfor %}
+        {% for item in issues_during_scan.failed %}
+        <li><strong>Failed:</strong> {{ item.tool }} - {{ item.reason }}. Full error saved to {{ item.stderr_path }}</li>
+        {% endfor %}
+        {% for item in issues_during_scan.parse_warnings %}
+        <li><strong>Parse warning:</strong> {{ item.tool }} - {{ item.message }}</li>
         {% endfor %}
       </ul>
     </section>
@@ -121,11 +141,11 @@
     </section>
 
     <section>
-      <h2>Report Paths</h2>
+      <h2>Report Files</h2>
       <ul>
-        <li>Raw report path: {{ report_paths.raw_report }}</li>
-        <li>Summary report path: {{ report_paths.summary_report }}</li>
-        <li>JSON report path: {{ report_paths.json_report }}</li>
+        <li>Summary HTML: {{ report_paths.summary_html_report }}</li>
+        <li>Raw HTML: {{ report_paths.raw_html_report }}</li>
+        <li>Summary JSON: {{ report_paths.summary_json_report }}</li>
       </ul>
     </section>
   </body>

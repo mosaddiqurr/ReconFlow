@@ -4,6 +4,7 @@ import json
 import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from reconflow.core.storage import read_scan_metadata, write_scan_metadata
 from reconflow.reports.html import render_html_report
@@ -78,17 +79,47 @@ TOOL_ARTIFACTS = {
 SUMMARY_TECHNOLOGY_KEYWORDS = {
     "apache",
     "cloudflare",
+    "cdn",
     "django",
     "express",
+    "framework",
+    "hsts",
     "jquery",
     "laravel",
+    "netlify",
     "nginx",
+    "next.js",
+    "nextjs",
     "openssl",
     "php",
     "rails",
     "react",
+    "security",
+    "server",
     "tomcat",
     "wordpress",
+}
+NOISY_TECHNOLOGY_NAMES = {
+    "country",
+    "httpserver",
+    "ip",
+    "redirectlocation",
+    "uncommonheaders",
+}
+STATIC_ASSET_EXTENSIONS = {
+    ".css",
+    ".gif",
+    ".ico",
+    ".jpeg",
+    ".jpg",
+    ".js",
+    ".json",
+    ".map",
+    ".png",
+    ".svg",
+    ".webp",
+    ".woff",
+    ".woff2",
 }
 SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 SEVERITY_LABELS = {
@@ -139,28 +170,42 @@ def build_summary_report_context(scan_folder: str | Path) -> dict[str, Any]:
     parsed = _load_parsed_artifacts(scan_path)
     findings, overall_risk_score = _load_findings(metadata, parsed["findings_payload"])
     relevant_technologies = _security_relevant_technologies(parsed["technologies"])
+    katana_url_groups = _classify_crawled_urls(parsed["crawled_urls"])
     vulnerability_summary = _vulnerability_summary(parsed["vulnerabilities"])
-    security_observations = _security_observations(
+    important_observations = _important_observations(
+        metadata,
         parsed,
         relevant_technologies,
         findings,
+        katana_url_groups,
     )
     tool_execution_summary = _tool_execution_summary(metadata)
+    issues_during_scan = _issues_during_scan(metadata)
     recommended_actions = _recommended_actions(
         parsed,
         relevant_technologies,
         findings,
         tool_execution_summary,
+        katana_url_groups,
+    )
+    what_was_found = _what_was_found(
+        parsed,
+        findings,
+        relevant_technologies,
+        katana_url_groups,
     )
 
     return {
         "view": "summary",
         "scan_id": metadata.get("scan_id", scan_path.name),
         "scan_overview": _scan_overview(metadata, overall_risk_score),
+        "what_was_found": what_was_found,
         "key_findings": _key_findings(parsed, findings),
-        "security_observations": security_observations,
+        "important_observations": important_observations,
+        "security_observations": important_observations,
         "vulnerability_summary": vulnerability_summary,
         "correlated_findings": _summary_correlated_findings(findings),
+        "issues_during_scan": issues_during_scan,
         "recommended_actions": recommended_actions,
         "tool_execution_summary": tool_execution_summary,
         "report_paths": _report_paths(scan_path),
@@ -251,10 +296,13 @@ def build_json_report_payload(context: dict[str, Any]) -> dict[str, Any]:
         "view": "summary",
         "scan_id": context["scan_id"],
         "scan_overview": context["scan_overview"],
+        "what_was_found": context["what_was_found"],
         "key_findings": context["key_findings"],
+        "important_observations": context["important_observations"],
         "security_observations": context["security_observations"],
         "vulnerability_summary": context["vulnerability_summary"],
         "correlated_findings": context["correlated_findings"],
+        "issues_during_scan": context["issues_during_scan"],
         "recommended_actions": context["recommended_actions"],
         "tool_execution_summary": context["tool_execution_summary"],
         "report_paths": context["report_paths"],
@@ -353,24 +401,49 @@ def _load_findings(
 
 
 def _scan_overview(metadata: dict[str, Any], overall_risk_score: int) -> dict[str, Any]:
+    scan_status = _scan_completion_status(metadata)
+    limited = scan_status in {"Partially Completed", "Failed"}
     return {
         "target": metadata.get("target", "-"),
         "target_type": metadata.get("target_type", "-"),
         "scan_mode": metadata.get("mode", "-"),
         "scan_time": metadata.get("start_time", "-"),
+        "scan_status": scan_status,
+        "confidence": "Limited" if limited else "High",
         "overall_risk_score": overall_risk_score,
-        "risk_level": _risk_level(overall_risk_score),
+        "risk_level": _risk_level(overall_risk_score, limited=limited),
     }
 
 
-def _risk_level(score: int) -> str:
+def _risk_level(score: int, limited: bool = False) -> str:
     if score >= 75:
-        return "Critical"
-    if score >= 50:
-        return "High"
-    if score >= 25:
-        return "Medium"
-    return "Low"
+        level = "Critical"
+    elif score >= 50:
+        level = "High"
+    elif score >= 25:
+        level = "Medium"
+    else:
+        level = "Low"
+    if limited:
+        return f"{level} based on available results"
+    return level
+
+
+def _scan_completion_status(metadata: dict[str, Any]) -> str:
+    if str(metadata.get("status", "")).lower() == "failed":
+        return "Failed"
+    if not _has_important_tool_issues(metadata):
+        return "Completed"
+    return "Partially Completed"
+
+
+def _has_important_tool_issues(metadata: dict[str, Any]) -> bool:
+    if metadata.get("tools_failed") or metadata.get("tools_parse_warnings"):
+        return True
+    return any(
+        item.get("reason") == "Missing external tool"
+        for item in metadata.get("tools_skipped", [])
+    )
 
 
 def _build_tool_result(
@@ -406,6 +479,9 @@ def _build_tool_result(
         "result_count": len(results) if isinstance(results, list) else 0,
         "vulnerabilities_by_severity": _group_by_severity(results)
         if result_key == "vulnerabilities"
+        else {},
+        "url_groups": _classify_crawled_urls(results)
+        if result_key == "crawled_urls"
         else {},
         "interesting_urls": [
             item for item in results if item.get("interesting")
@@ -507,20 +583,91 @@ def _key_findings(
     }
 
 
-def _security_observations(
+def _what_was_found(
+    parsed: dict[str, Any],
+    findings: list[dict[str, Any]],
+    relevant_technologies: list[dict[str, Any]],
+    katana_url_groups: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    interesting_endpoint_count = len(
+        [endpoint for endpoint in parsed["endpoints"] if endpoint.get("interesting")]
+    )
+    interesting_endpoint_count += len(katana_url_groups["api_like"])
+    if interesting_endpoint_count == 0:
+        interesting_endpoint_count = len(katana_url_groups["pages"])
+    counts = {
+        "live_web_services": len(parsed["live_hosts"]),
+        "open_ports": len(parsed["services"]),
+        "technologies": len(relevant_technologies),
+        "interesting_endpoints": interesting_endpoint_count,
+        "vulnerabilities": len(parsed["vulnerabilities"]),
+        "screenshots_captured": len(parsed["screenshots"]),
+        "correlated_findings": len(findings),
+    }
+    labels = {
+        "live_web_services": "Live web services",
+        "open_ports": "Open ports",
+        "technologies": "Technologies",
+        "interesting_endpoints": "Interesting endpoints",
+        "vulnerabilities": "Vulnerabilities",
+        "screenshots_captured": "Screenshots captured",
+        "correlated_findings": "Correlated findings",
+    }
+    items = [
+        {"key": key, "label": labels[key], "count": count}
+        for key, count in counts.items()
+        if count > 0
+    ]
+    return {"counts": counts, "items": items}
+
+
+def _important_observations(
+    metadata: dict[str, Any],
     parsed: dict[str, Any],
     relevant_technologies: list[dict[str, Any]],
     findings: list[dict[str, Any]],
+    katana_url_groups: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, str]]:
     observations: list[dict[str, str]] = []
+    live_hosts = parsed["live_hosts"]
+    https_hosts = [
+        live_host for live_host in live_hosts if str(live_host.get("url", "")).startswith("https://")
+    ]
+    if https_hosts:
+        observations.append(
+            {
+                "type": "Live web service",
+                "title": "HTTPS application detected",
+                "detail": (
+                    "A live HTTPS web application was detected at "
+                    f"{https_hosts[0].get('url', '-')}"
+                    f"{_count_suffix(len(https_hosts), 'HTTPS service')}."
+                ),
+            }
+        )
+    elif live_hosts:
+        observations.append(
+            {
+                "type": "Live web service",
+                "title": "Web application detected",
+                "detail": (
+                    "A live web application was detected at "
+                    f"{live_hosts[0].get('url', '-')}"
+                    f"{_count_suffix(len(live_hosts), 'web service')}."
+                ),
+            }
+        )
     for service in parsed["services"]:
+        port = service.get("port")
+        if port not in WEB_PORTS:
+            continue
         observations.append(
             {
                 "type": "Exposed service",
-                "title": f"{service.get('protocol', 'tcp')}/{service.get('port')}",
+                "title": f"{service.get('protocol', 'tcp')}/{port}",
                 "detail": (
                     f"{service.get('host', '-')} exposes "
-                    f"{service.get('service_name') or 'an open service'}"
+                    f"{service.get('service_name') or 'a web service'}"
                     f"{_suffix(service.get('product'))}."
                 ),
             }
@@ -537,6 +684,28 @@ def _security_observations(
                 ),
             }
         )
+    page_count = len(katana_url_groups["pages"])
+    api_count = len(katana_url_groups["api_like"])
+    total_crawled = page_count + api_count + len(katana_url_groups["static_assets"])
+    if total_crawled:
+        detail_parts = []
+        if page_count:
+            detail_parts.append(f"{page_count} page{'s' if page_count != 1 else ''}")
+        if api_count:
+            detail_parts.append(
+                f"{api_count} API-like endpoint{'s' if api_count != 1 else ''}"
+            )
+        observations.append(
+            {
+                "type": "Crawled URLs",
+                "title": "Katana crawl results",
+                "detail": (
+                    f"Katana discovered {total_crawled} URL"
+                    f"{'s' if total_crawled != 1 else ''}"
+                    + (f", including {', '.join(detail_parts)}." if detail_parts else ".")
+                ),
+            }
+        )
     for endpoint in parsed["endpoints"]:
         if not endpoint.get("interesting"):
             continue
@@ -550,6 +719,14 @@ def _security_observations(
                 ),
             }
         )
+    for crawled_url in [*katana_url_groups["pages"][:3], *katana_url_groups["api_like"][:3]]:
+        observations.append(
+            {
+                "type": "Crawled URL",
+                "title": crawled_url.get("path") or crawled_url.get("url", "-"),
+                "detail": f"{crawled_url.get('url', '-')} was discovered during crawling.",
+            }
+        )
     for vulnerability in parsed["vulnerabilities"]:
         observations.append(
             {
@@ -559,6 +736,23 @@ def _security_observations(
                     f"{_severity_label(vulnerability.get('severity'))}: "
                     f"{vulnerability.get('matched_url') or vulnerability.get('host', '-')}"
                 ),
+            }
+        )
+    if "nuclei" in _tool_execution_summary(metadata).get("missing_tools", []):
+        observations.append(
+            {
+                "type": "Missing tool",
+                "title": "Nuclei not installed",
+                "detail": "No vulnerability template scan was performed because nuclei is missing.",
+            }
+        )
+    timed_out_tools = _tool_execution_summary(metadata).get("timed_out_tools", [])
+    if "nmap" in timed_out_tools:
+        observations.append(
+            {
+                "type": "Timed out",
+                "title": "Nmap timed out",
+                "detail": "Nmap timed out, so network-service visibility is incomplete.",
             }
         )
     for finding in findings:
@@ -584,12 +778,17 @@ def _security_relevant_technologies(
         host = str(technology.get("host", "")).strip()
         name = str(technology.get("name", "")).strip()
         version = str(technology.get("version") or "").strip()
+        category = str(technology.get("category") or "").strip()
         normalized_name = name.lower()
         if not host or not name:
             continue
+        if normalized_name in NOISY_TECHNOLOGY_NAMES:
+            continue
+        normalized_category = category.lower()
         is_relevant = (
             normalized_name in SUMMARY_TECHNOLOGY_KEYWORDS
             or any(keyword in normalized_name for keyword in SUMMARY_TECHNOLOGY_KEYWORDS)
+            or any(keyword in normalized_category for keyword in SUMMARY_TECHNOLOGY_KEYWORDS)
             or bool(version)
         )
         key = (host, normalized_name, version)
@@ -644,9 +843,15 @@ def _recommended_actions(
     parsed: dict[str, Any],
     relevant_technologies: list[dict[str, Any]],
     findings: list[dict[str, Any]],
-    tool_summary: dict[str, list[str]],
+    tool_summary: dict[str, Any],
+    katana_url_groups: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[str]:
     actions: list[str] = []
+    incomplete = tool_summary.get("completion_status") in {"Partially Completed", "Failed"}
+    if tool_summary.get("failed_tools") or tool_summary.get("timed_out_tools"):
+        actions.append("Resolve failed/timed-out tools and rerun scan.")
+    if tool_summary.get("failed_tools") or tool_summary.get("timed_out_tools") or tool_summary.get("missing_tools"):
+        actions.append("Review tool errors in raw stderr files.")
     web_ports = sorted(
         {
             int(service.get("port"))
@@ -661,6 +866,16 @@ def _recommended_actions(
         )
     if any(endpoint.get("interesting") for endpoint in parsed["endpoints"]):
         actions.append("Validate whether discovered endpoints should be publicly accessible.")
+    if katana_url_groups and (katana_url_groups["pages"] or katana_url_groups["api_like"]):
+        sample_paths = [
+            item.get("path") or urlparse(str(item.get("url", ""))).path or str(item.get("url", ""))
+            for item in [*katana_url_groups["pages"][:3], *katana_url_groups["api_like"][:3]]
+        ]
+        if sample_paths:
+            actions.append(
+                "Review discovered public endpoints such as "
+                f"{', '.join(sample_paths)}."
+            )
     if relevant_technologies:
         actions.append("Review detected technologies for outdated versions.")
     if parsed["vulnerabilities"]:
@@ -669,12 +884,17 @@ def _recommended_actions(
         recommendation = str(finding.get("recommendation", "")).strip()
         if recommendation:
             actions.append(recommendation)
-    if "nuclei" in tool_summary.get("missing_tools", []) and parsed["live_hosts"]:
+    if "nuclei" in tool_summary.get("missing_tools", []):
         actions.append("Install nuclei and rerun the scan for template-based vulnerability checks.")
 
     deduped_actions = _dedupe_strings(actions)
     if deduped_actions:
         return deduped_actions
+    if incomplete:
+        return [
+            "Resolve failed/timed-out tools and rerun scan.",
+            "Review tool errors in raw stderr files.",
+        ]
     return [
         (
             "No major security-relevant findings were identified from the available "
@@ -683,7 +903,7 @@ def _recommended_actions(
     ]
 
 
-def _tool_execution_summary(metadata: dict[str, Any]) -> dict[str, list[str]]:
+def _tool_execution_summary(metadata: dict[str, Any]) -> dict[str, Any]:
     skipped_entries = metadata.get("tools_skipped", [])
     failed_entries = metadata.get("tools_failed", [])
     skipped_tools = [
@@ -711,7 +931,7 @@ def _tool_execution_summary(metadata: dict[str, Any]) -> dict[str, list[str]]:
         for item in metadata.get("tools_parse_warnings", [])
     ]
     return {
-        "completion_status": "partially completed" if parse_warnings else "completed",
+        "completion_status": _scan_completion_status(metadata),
         "completed_tools": metadata.get("tools_completed", []),
         "skipped_tools": skipped_tools,
         "missing_tools": missing_tools,
@@ -721,16 +941,84 @@ def _tool_execution_summary(metadata: dict[str, Any]) -> dict[str, list[str]]:
     }
 
 
+def _issues_during_scan(metadata: dict[str, Any]) -> dict[str, Any]:
+    failed_entries = [
+        item
+        for item in metadata.get("tools_failed", [])
+        if item.get("reason") != "Command timed out"
+    ]
+    timed_out_entries = [
+        item
+        for item in metadata.get("tools_failed", [])
+        if item.get("reason") == "Command timed out"
+    ]
+    missing_entries = [
+        item
+        for item in metadata.get("tools_skipped", [])
+        if item.get("reason") == "Missing external tool"
+    ]
+    parse_warning_entries = metadata.get("tools_parse_warnings", [])
+    issues = {
+        "timed_out": [
+            _issue_entry(metadata, item.get("tool", "-"), item.get("reason", "-"))
+            for item in timed_out_entries
+        ],
+        "missing": [
+            _issue_entry(metadata, item.get("tool", "-"), item.get("reason", "-"))
+            for item in missing_entries
+        ],
+        "failed": [
+            _issue_entry(metadata, item.get("tool", "-"), item.get("reason", "-"))
+            for item in failed_entries
+        ],
+        "parse_warnings": [
+            {
+                "tool": item.get("tool", "-"),
+                "message": item.get("message", "-"),
+            }
+            for item in parse_warning_entries
+        ],
+    }
+    issues["has_issues"] = any(issues[key] for key in ("timed_out", "missing", "failed", "parse_warnings"))
+    return issues
+
+
+def _issue_entry(metadata: dict[str, Any], tool_name: str, reason: str) -> dict[str, str]:
+    run = _latest_tool_run(metadata, tool_name)
+    return {
+        "tool": tool_name,
+        "reason": reason,
+        "stderr_path": run.get("stderr_path") or f"raw/{tool_name}.stderr.txt",
+        "stdout_path": run.get("stdout_path") or "",
+    }
+
+
+def _latest_tool_run(metadata: dict[str, Any], tool_name: str) -> dict[str, Any]:
+    for run in reversed(metadata.get("tool_runs", [])):
+        if run.get("tool") == tool_name:
+            return run
+    return {}
+
+
 def _report_paths(scan_path: Path) -> dict[str, str]:
     return {
         "raw_report": "reports/report_raw.md",
         "summary_report": "reports/report_summary.md",
         "json_report": "reports/report_summary.json",
         "raw_json_report": "reports/report_raw.json",
+        "summary_html_report": _short_report_path(scan_path, "reports/report_summary.html"),
+        "raw_html_report": _short_report_path(scan_path, "reports/report_raw.html"),
+        "summary_json_report": _short_report_path(scan_path, "reports/report_summary.json"),
         "backward_markdown_report": "reports/report.md",
         "backward_html_report": "reports/report.html",
         "backward_json_report": "reports/report.json",
     }
+
+
+def _short_report_path(scan_path: Path, relative_path: str) -> str:
+    if scan_path.parent.name:
+        return f"{scan_path.parent.name}/{scan_path.name}/{relative_path}"
+    return f"{scan_path.name}/{relative_path}"
 
 
 def _write_backward_compatible_report(
@@ -800,10 +1088,48 @@ def _severity_label(value: Any) -> str:
     return SEVERITY_LABELS[_normalize_severity(value)]
 
 
+def _classify_crawled_urls(
+    crawled_urls: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {
+        "pages": [],
+        "api_like": [],
+        "static_assets": [],
+    }
+    for item in crawled_urls:
+        url = str(item.get("url", "")).strip()
+        path = str(item.get("path") or urlparse(url).path or "").strip()
+        lowered_path = path.lower()
+        if _is_static_asset_path(lowered_path):
+            groups["static_assets"].append(item)
+        elif _is_api_like_path(lowered_path):
+            groups["api_like"].append(item)
+        else:
+            groups["pages"].append(item)
+    return groups
+
+
+def _is_static_asset_path(path: str) -> bool:
+    if "/_next/static/" in path or "/static/" in path:
+        return True
+    return any(path.endswith(extension) for extension in STATIC_ASSET_EXTENSIONS)
+
+
+def _is_api_like_path(path: str) -> bool:
+    return path.startswith("/api") or "/api/" in path
+
+
 def _suffix(value: Any) -> str:
     if value is None or value == "":
         return ""
     return f" {value}"
+
+
+def _count_suffix(count: int, label: str) -> str:
+    if count <= 1:
+        return ""
+    plural = label if label.endswith("s") else f"{label}s"
+    return f" and {count - 1} other {plural}"
 
 
 def _first(items: Any, default: str) -> str:

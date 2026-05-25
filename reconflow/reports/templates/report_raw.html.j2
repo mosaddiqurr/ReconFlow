@@ -31,19 +31,21 @@
     <p><strong>Scan ID:</strong> {{ scan_id }}</p>
 
     <section>
-      <h2>Scan Overview</h2>
+      <h2>Scan Metadata</h2>
       <ul>
         <li>Target: {{ scan_overview.target }}</li>
         <li>Target type: {{ scan_overview.target_type }}</li>
         <li>Scan mode: {{ scan_overview.scan_mode }}</li>
         <li>Scan time: {{ scan_overview.scan_time }}</li>
+        <li>Scan status: {{ scan_overview.scan_status }}</li>
+        <li>Confidence: {{ scan_overview.confidence }}</li>
         <li>Overall risk score: {{ overall_risk_score }}/100</li>
         <li>Risk level: {{ risk_level }}</li>
       </ul>
     </section>
 
     <section>
-      <h2>Tool Results</h2>
+      <h2>Tool-by-Tool Results</h2>
       {% for tool in tool_results %}
       <article>
         <h3>Tool {{ tool.index }}: {{ tool.tool }}</h3>
@@ -103,7 +105,7 @@
     </section>
 
     <section>
-      <h2>Report Paths</h2>
+      <h2>Artifacts</h2>
       <ul>
         <li>Raw report path: {{ report_paths.raw_report }}</li>
         <li>Summary report path: {{ report_paths.summary_report }}</li>

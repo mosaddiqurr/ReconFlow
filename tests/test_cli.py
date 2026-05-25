@@ -4,8 +4,9 @@ from tempfile import TemporaryDirectory
 
 from typer.testing import CliRunner
 
-from reconflow.cli import app
-from reconflow.core.storage import read_scan_metadata
+from reconflow.cli import app, console, render_raw_cli_results
+from reconflow.core.storage import create_scan_folder, read_scan_metadata, write_scan_metadata
+from reconflow.reports.json_report import build_raw_report_context
 from reconflow.models.tool_result import ToolRunResult
 
 runner = CliRunner()
@@ -139,9 +140,9 @@ def test_scan_allowed_with_authorization(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Raw Scan Results" in result.output
-    assert "Correlated Findings" in result.output
-    assert "Tool Results" in result.output
+    assert "Summary Scan Results" in result.output
+    assert "Workflow Summary" in result.output
+    assert "Tool Execution Summary" in result.output
     assert metadata["scan_id"] == "scan_001_example_com"
     assert metadata["target"] == "example.com"
     assert metadata["target_type"] == "domain"
@@ -184,8 +185,8 @@ def test_scan_valid_mode_quick(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Raw Scan Results" in result.output
-    assert "Tool Results" in result.output
+    assert "Summary Scan Results" in result.output
+    assert "Workflow Summary" in result.output
     assert metadata["mode"] == "quick"
     assert metadata["tools_planned"] == ["nmap", "httpx"]
 
@@ -223,7 +224,7 @@ def test_scan_explain_dry_run_shows_workflow_decisions(monkeypatch) -> None:
     assert metadata["mode"] == "standard"
 
 
-def test_scan_default_view_is_raw(monkeypatch) -> None:
+def test_scan_default_view_is_summary(monkeypatch) -> None:
     original_cwd = Path.cwd()
 
     with TemporaryDirectory() as tmp_dir:
@@ -238,8 +239,8 @@ def test_scan_default_view_is_raw(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Raw Scan Results" in result.output
-    assert "Tool Results" in result.output
+    assert "Summary Scan Results" in result.output
+    assert "Raw Scan Results" not in result.output
 
 
 def test_scan_view_raw_shows_tool_by_tool_headings(monkeypatch) -> None:
@@ -267,6 +268,7 @@ def test_scan_view_raw_shows_tool_by_tool_headings(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "Raw Scan Results" in result.output
+    assert "Tool-by-Tool Results" in result.output
     assert "Tool 1: subfinder" in result.output
     assert "Tool 9: gowitness" in result.output
 
@@ -296,10 +298,76 @@ def test_scan_view_summary_shows_compact_summary_headings(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "Summary Scan Results" in result.output
-    assert "Scan Overview" in result.output
+    assert "Scan Result" in result.output
     assert "Recommended Next Actions" in result.output
     assert "Tool Execution Summary" in result.output
-    assert "Report Paths" in result.output
+    assert "Reports saved" in result.output
+
+
+def test_normal_scan_hides_workflow_summary_and_step_panels(monkeypatch) -> None:
+    original_cwd = Path.cwd()
+
+    monkeypatch.setattr(
+        "reconflow.cli.run_nmap",
+        lambda *args, **kwargs: missing_tool_result("nmap"),
+    )
+    monkeypatch.setattr(
+        "reconflow.cli.run_httpx",
+        lambda *args, **kwargs: missing_tool_result("httpx"),
+    )
+
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        try:
+            monkeypatch.chdir(tmp_path)
+            result = runner.invoke(
+                app,
+                ["scan", "example.com", "--mode", "quick", "--i-authorize"],
+            )
+        finally:
+            monkeypatch.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "[1/2] nmap missing" in result.output
+    assert "Summary Scan Results" in result.output
+    assert "Workflow Summary" not in result.output
+    assert "Step Progress" not in result.output
+
+
+def test_scan_verbose_shows_detailed_progress_panels(monkeypatch) -> None:
+    original_cwd = Path.cwd()
+
+    monkeypatch.setattr(
+        "reconflow.cli.run_nmap",
+        lambda *args, **kwargs: tool_result("nmap", exit_code=2, stderr="boom"),
+    )
+    monkeypatch.setattr(
+        "reconflow.cli.run_httpx",
+        lambda *args, **kwargs: missing_tool_result("httpx"),
+    )
+
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        try:
+            monkeypatch.chdir(tmp_path)
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "example.com",
+                    "--mode",
+                    "quick",
+                    "--i-authorize",
+                    "--verbose",
+                ],
+            )
+        finally:
+            monkeypatch.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "Workflow Summary" in result.output
+    assert "Step Progress" in result.output
+    assert "Command Execution Issue" in result.output
 
 
 def test_scan_invalid_view_fails_cleanly(monkeypatch) -> None:
@@ -444,7 +512,7 @@ def test_scan_runs_mocked_nmap_and_parses_services(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Open Ports" in result.output
+    assert "What Was Found" in result.output
     assert metadata["tools_completed"] == ["nmap"]
     assert len(parsed_services) == 1
     assert parsed_services[0]["host"] == "93.184.216.34"
@@ -521,7 +589,7 @@ def test_scan_runs_mocked_httpx_and_parses_live_hosts(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Live Web Services" in result.output
+    assert "What Was Found" in result.output
     assert metadata["tools_completed"] == ["httpx"]
     assert len(parsed_live_hosts) == 1
     assert parsed_live_hosts[0]["url"] == "https://example.com"
@@ -665,7 +733,7 @@ def test_scan_runs_mocked_whatweb_from_live_hosts(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Technologies Detected" in result.output
+    assert "Important Observations" in result.output
     assert metadata["tools_completed"] == ["subfinder", "dnsx", "httpx", "whatweb"]
     assert len(parsed_technologies) == 2
     assert parsed_technologies[0]["host"] == "example.com"
@@ -831,7 +899,7 @@ def test_scan_runs_mocked_feroxbuster_from_live_hosts(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Endpoints Discovered" in result.output
+    assert "What Was Found" in result.output
     assert metadata["tools_completed"] == [
         "subfinder",
         "dnsx",
@@ -1003,7 +1071,7 @@ def test_scan_runs_mocked_katana_from_live_hosts_and_merges_endpoints(monkeypatc
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Crawled URLs" in result.output
+    assert "Important Observations" in result.output
     assert metadata["tools_completed"] == ["subfinder", "dnsx", "httpx", "katana"]
     assert len(parsed_crawled_urls) == 3
     assert parsed_crawled_urls[0]["host"] == "example.com"
@@ -1176,9 +1244,8 @@ def test_scan_runs_mocked_nuclei_from_live_hosts(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Informational Findings" in result.output
-    assert "Medium Findings" in result.output
-    assert "Critical Findings" in result.output
+    assert "Vulnerability Summary" in result.output
+    assert "What Was Found" in result.output
     assert metadata["tools_completed"] == ["subfinder", "dnsx", "httpx", "nuclei"]
     assert len(parsed_vulnerabilities) == 3
     assert parsed_vulnerabilities[0]["name"] == "Technology Detection"
@@ -1365,8 +1432,9 @@ def test_scan_runs_mocked_gowitness_from_live_hosts(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Screenshots Captured" in result.output
-    assert "Report Paths" in result.output
+    assert "Summary Scan Results" in result.output
+    assert "What Was Found" in result.output
+    assert "Reports saved" in result.output
     assert metadata["tools_completed"] == ["subfinder", "dnsx", "httpx", "gowitness"]
     assert len(parsed_screenshots) == 1
     assert parsed_screenshots[0]["url"] == "https://example.com"
@@ -1622,6 +1690,56 @@ def test_scan_does_not_crash_when_katana_output_has_malformed_jsonl(
     assert raw_katana_exists is True
 
 
+def test_raw_view_caps_and_groups_katana_results(tmp_path) -> None:
+    metadata = create_scan_folder(
+        target="example.com",
+        target_type="domain",
+        mode="deep",
+        base_dir=tmp_path / "scans",
+        tools_planned=["katana"],
+    )
+    metadata["tools_completed"] = ["katana"]
+    scan_path = Path(metadata["output_dir"])
+    write_scan_metadata(scan_path, metadata)
+    crawled_urls = [
+        {"url": f"https://example.com/page-{index}", "path": f"/page-{index}"}
+        for index in range(4)
+    ]
+    crawled_urls.extend(
+        [
+            {"url": "https://example.com/api/users", "path": "/api/users"},
+            {"url": "https://example.com/api/search", "path": "/api/search"},
+        ]
+    )
+    crawled_urls.extend(
+        [
+            {
+                "url": f"https://example.com/_next/static/chunk-{index}.js",
+                "path": f"/_next/static/chunk-{index}.js",
+            }
+            for index in range(8)
+        ]
+    )
+    (scan_path / "parsed" / "crawled_urls.json").write_text(
+        json.dumps(crawled_urls),
+        encoding="utf-8",
+    )
+    (scan_path / "parsed" / "findings.json").write_text(
+        json.dumps({"overall_risk_score": 0, "findings": []}),
+        encoding="utf-8",
+    )
+
+    context = build_raw_report_context(scan_path)
+    with console.capture() as capture:
+        render_raw_cli_results(context)
+    output = capture.get()
+
+    assert "Pages:" in output
+    assert "API-like endpoints:" in output
+    assert "Static assets:" in output
+    assert "Showing 10 of 14 results" in output
+
+
 def test_summary_view_handles_katana_parse_warning(monkeypatch) -> None:
     original_cwd = Path.cwd()
     mock_malformed_katana_scan(monkeypatch)
@@ -1652,10 +1770,76 @@ def test_summary_view_handles_katana_parse_warning(monkeypatch) -> None:
     assert "Summary Scan Results" in result.output
     assert "Tool Execution Summary" in result.output
     assert "Parse warnings" in result.output
-    assert "partially completed" in result.output
+    assert "Partially Completed" in result.output
     assert metadata["tools_completed"] == ["subfinder", "httpx", "katana"]
     assert metadata["tools_parse_warnings"] == [
         {"tool": "katana", "message": "Skipped 1 malformed JSONL line"}
+    ]
+
+
+def test_gowitness_failure_does_not_crash_scan(monkeypatch) -> None:
+    original_cwd = Path.cwd()
+    sample_httpx_jsonl = (
+        '{"url":"https://example.com","host":"example.com","status_code":200}\n'
+    )
+
+    def fake_run_subfinder(target, scan_folder, timeout=None):
+        (Path(scan_folder) / "raw" / "subfinder.txt").write_text("", encoding="utf-8")
+        return tool_result("subfinder")
+
+    def fake_run_nmap(target, scan_folder, timeout=None):
+        return missing_tool_result("nmap")
+
+    def fake_run_httpx(target, scan_folder, resolved_hosts=None, timeout=None):
+        (Path(scan_folder) / "raw" / "httpx.jsonl").write_text(
+            sample_httpx_jsonl,
+            encoding="utf-8",
+        )
+        return tool_result("httpx")
+
+    def fake_run_gowitness(scan_folder, live_hosts_path, timeout=None):
+        return ToolRunResult(
+            tool_name="gowitness",
+            command=["gowitness", "scan", "file"],
+            exit_code=1,
+            stdout="",
+            stderr="unsupported flag",
+            start_time="2026-05-18T00:00:00+00:00",
+            end_time="2026-05-18T00:00:01+00:00",
+            duration_seconds=1.0,
+            timed_out=False,
+        )
+
+    monkeypatch.setattr("reconflow.cli.run_subfinder", fake_run_subfinder)
+    monkeypatch.setattr(
+        "reconflow.cli.run_dnsx",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("dnsx should be skipped")
+        ),
+    )
+    monkeypatch.setattr("reconflow.cli.run_nmap", fake_run_nmap)
+    monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
+    mock_missing_web_tools(monkeypatch, ["whatweb", "feroxbuster", "katana", "nuclei"])
+    monkeypatch.setattr("reconflow.cli.run_gowitness", fake_run_gowitness)
+
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        try:
+            monkeypatch.chdir(tmp_path)
+            result = runner.invoke(
+                app,
+                ["scan", "example.com", "--mode", "deep", "--i-authorize"],
+            )
+            metadata = read_scan_metadata(
+                tmp_path / "scans" / "scan_001_example_com" / "metadata.json"
+            )
+        finally:
+            monkeypatch.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "Issues During Scan" in result.output
+    assert {"tool": "gowitness", "reason": "Command failed with exit code 1"} in metadata[
+        "tools_failed"
     ]
 
 
@@ -1913,7 +2097,7 @@ def test_scan_runs_mocked_subfinder_and_dnsx_for_domain(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Raw Scan Results" in result.output
+    assert "Summary Scan Results" in result.output
     assert metadata["tools_completed"] == ["subfinder", "dnsx"]
     assert parsed_subdomains == ["www.example.com", "api.example.com"]
     assert len(parsed_assets) == 2
@@ -1981,6 +2165,6 @@ def test_scan_skips_subfinder_and_dnsx_for_ip_target(monkeypatch) -> None:
             monkeypatch.chdir(original_cwd)
 
     assert result.exit_code == 0
-    assert "Raw Scan Results" in result.output
+    assert "Summary Scan Results" in result.output
     assert metadata["target_type"] == "ip"
     assert metadata["tools_completed"] == []

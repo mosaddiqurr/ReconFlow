@@ -35,7 +35,10 @@ class ReconFlowConfig(BaseModel):
     wordlist_path: str = "reconflow/data/wordlists/common.txt"
     enabled_tools: list[str] = Field(default_factory=lambda: DEFAULT_ENABLED_TOOLS.copy())
     tool_timeouts: dict[str, int] = Field(
-        default_factory=lambda: {tool_name: 60 for tool_name in DEFAULT_ENABLED_TOOLS}
+        default_factory=lambda: {
+            **{tool_name: 60 for tool_name in DEFAULT_ENABLED_TOOLS},
+            "nmap": 300,
+        }
     )
     safe_defaults: SafeDefaults = Field(default_factory=SafeDefaults)
 
