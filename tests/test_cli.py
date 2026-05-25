@@ -1019,6 +1019,19 @@ def test_scan_runs_mocked_katana_from_live_hosts_and_merges_endpoints(monkeypatc
             timed_out=False,
         )
 
+    def fake_run_gowitness(scan_folder, live_hosts_path, timeout=None):
+        return ToolRunResult(
+            tool_name="gowitness",
+            command=["gowitness", "scan", "--list", "gowitness_input.txt"],
+            exit_code=127,
+            stdout="",
+            stderr="mocked missing gowitness",
+            start_time="2026-05-18T00:00:00+00:00",
+            end_time="2026-05-18T00:00:01+00:00",
+            duration_seconds=1.0,
+            timed_out=False,
+        )
+
     def fake_run_katana(scan_folder, live_hosts_path, timeout=None):
         live_hosts = json.loads(Path(live_hosts_path).read_text(encoding="utf-8"))
         assert [live_host["url"] for live_host in live_hosts] == [
@@ -1044,6 +1057,7 @@ def test_scan_runs_mocked_katana_from_live_hosts_and_merges_endpoints(monkeypatc
     monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
     monkeypatch.setattr("reconflow.cli.run_whatweb", fake_run_whatweb)
     monkeypatch.setattr("reconflow.cli.run_feroxbuster", fake_run_feroxbuster)
+    monkeypatch.setattr("reconflow.cli.run_gowitness", fake_run_gowitness)
     monkeypatch.setattr("reconflow.cli.run_katana", fake_run_katana)
 
     with TemporaryDirectory() as tmp_dir:
