@@ -40,7 +40,7 @@ SAMPLE_SCREENSHOT_METADATA = """[
 
 
 def test_load_gowitness_targets_from_live_hosts() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         live_hosts_path = Path(tmp_dir) / "live_hosts.json"
         live_hosts_path.write_text(SAMPLE_LIVE_HOSTS_JSON, encoding="utf-8")
 
@@ -50,7 +50,7 @@ def test_load_gowitness_targets_from_live_hosts() -> None:
 
 
 def test_write_gowitness_input() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         input_path = Path(tmp_dir) / "raw" / "gowitness_input.txt"
 
         saved_path = write_gowitness_input(
@@ -82,7 +82,7 @@ def test_build_gowitness_command() -> None:
 
 
 def test_parse_gowitness_metadata_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         metadata_path = Path(tmp_dir) / "screenshots.json"
         metadata_path.write_text(SAMPLE_SCREENSHOT_METADATA, encoding="utf-8")
 
@@ -97,7 +97,7 @@ def test_parse_gowitness_metadata_fixture() -> None:
 
 
 def test_collect_screenshot_metadata_from_fake_files() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         screenshots_dir = Path(tmp_dir) / "screenshots"
         screenshots_dir.mkdir()
         screenshot_path = screenshots_dir / "example.com.png"
@@ -119,7 +119,7 @@ def test_collect_screenshot_metadata_from_fake_files() -> None:
 
 
 def test_save_screenshots_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         metadata_path = temp_path / "screenshots.json"
         output_path = temp_path / "parsed" / "screenshots.json"

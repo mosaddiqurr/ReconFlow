@@ -37,7 +37,7 @@ SAMPLE_KATANA_JSONL = """{"url":"https://example.com/login?redirect=/dashboard"}
 
 
 def test_load_katana_targets_from_live_hosts() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         live_hosts_path = Path(tmp_dir) / "live_hosts.json"
         live_hosts_path.write_text(SAMPLE_LIVE_HOSTS_JSON, encoding="utf-8")
 
@@ -47,7 +47,7 @@ def test_load_katana_targets_from_live_hosts() -> None:
 
 
 def test_write_katana_input() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         input_path = Path(tmp_dir) / "raw" / "katana_input.txt"
 
         saved_path = write_katana_input(
@@ -80,7 +80,7 @@ def test_build_katana_command() -> None:
 
 
 def test_parse_katana_jsonl_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         jsonl_path = Path(tmp_dir) / "katana.jsonl"
         jsonl_path.write_text(SAMPLE_KATANA_JSONL, encoding="utf-8")
 
@@ -97,7 +97,7 @@ def test_parse_katana_jsonl_fixture() -> None:
 
 
 def test_interesting_crawled_url_markers() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         jsonl_path = Path(tmp_dir) / "katana.jsonl"
         jsonl_path.write_text(SAMPLE_KATANA_JSONL, encoding="utf-8")
 
@@ -109,7 +109,7 @@ def test_interesting_crawled_url_markers() -> None:
 
 
 def test_save_crawled_urls_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         jsonl_path = temp_path / "katana.jsonl"
         crawled_urls_path = temp_path / "parsed" / "crawled_urls.json"
@@ -125,7 +125,7 @@ def test_save_crawled_urls_json() -> None:
 
 
 def test_merge_interesting_crawled_urls_into_endpoints_without_duplicates() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         jsonl_path = temp_path / "katana.jsonl"
         endpoints_path = temp_path / "parsed" / "endpoints.json"

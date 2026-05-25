@@ -17,7 +17,10 @@ from reconflow.core.storage import create_scan_folder, read_scan_history, write_
 from reconflow.core.workflow import get_workflow_steps
 from reconflow.models.target import Target
 from reconflow.reports.json_report import (
+    build_raw_report_context,
+    build_summary_report_context,
     find_scan_folder,
+    generate_all_report_views,
     generate_reports,
     has_parsed_data,
 )
@@ -67,6 +70,7 @@ from reconflow.tools.subfinder import (
     parse_subfinder_output,
     run_subfinder,
     save_subdomains_json,
+    select_subfinder_domain,
 )
 from reconflow.tools.whatweb import (
     parse_whatweb_json,
@@ -83,6 +87,7 @@ app = typer.Typer(
 tools_app = typer.Typer(help="Tool integration helpers.")
 app.add_typer(tools_app, name="tools")
 console = Console()
+VALID_RESULT_VIEWS = ("raw", "summary")
 
 
 def _mark_tool_completed(metadata: dict, tool_name: str) -> None:
@@ -99,6 +104,39 @@ def _mark_tool_skipped(metadata: dict, tool_name: str, reason: str) -> None:
 def _mark_tool_failed(metadata: dict, tool_name: str, reason: str) -> None:
     failed_tools = metadata.setdefault("tools_failed", [])
     failed_tools.append({"tool": tool_name, "reason": reason})
+
+
+def _record_tool_decision(metadata: dict, decision: WorkflowDecision) -> None:
+    decisions = metadata.setdefault("tool_decisions", {})
+    decisions[decision.tool_name] = {
+        "should_run": decision.should_run,
+        "reason": decision.reason,
+        "input_description": decision.input_description,
+        "output_description": decision.output_description,
+        "skip_reason": decision.skip_reason,
+    }
+
+
+def _record_tool_run(metadata: dict, result) -> None:
+    tool_runs = metadata.setdefault("tool_runs", [])
+    command = result.command if isinstance(result.command, list) else [str(result.command)]
+    tool_runs.append(
+        {
+            "tool": result.tool_name,
+            "command": shlex.join(command),
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "duration_seconds": result.duration_seconds,
+        }
+    )
+
+
+def _normalize_result_view(view: str) -> str:
+    normalized_view = view.lower()
+    if normalized_view not in VALID_RESULT_VIEWS:
+        valid_views = ", ".join(VALID_RESULT_VIEWS)
+        raise ValueError(f"Invalid view '{view}'. Valid: {valid_views}.")
+    return normalized_view
 
 
 def _top_technologies_by_host(technologies: list) -> str:
@@ -215,6 +253,7 @@ def _tool_result_ok(
     scan_folder: Path,
     tool_checks: dict,
 ) -> bool:
+    _record_tool_run(metadata, result)
     if result.timed_out:
         reason = "Command timed out"
         _mark_tool_failed(metadata, result.tool_name, reason)
@@ -292,6 +331,266 @@ def _print_comparison_tables(comparison: dict) -> None:
     console.print(details_table)
 
 
+def render_raw_cli_results(context: dict) -> None:
+    """Render detailed tool-by-tool scan results."""
+    console.print(Panel.fit("Raw Scan Results", style="bold cyan"))
+    overview = context["scan_overview"]
+    overview_table = Table(title="Scan Overview")
+    overview_table.add_column("Field", style="bold")
+    overview_table.add_column("Value")
+    overview_table.add_row("Target", overview["target"])
+    overview_table.add_row("Target Type", overview["target_type"])
+    overview_table.add_row("Scan Mode", overview["scan_mode"])
+    overview_table.add_row("Overall Risk Score", str(overview["overall_risk_score"]))
+    overview_table.add_row("Risk Level", overview["risk_level"])
+    console.print(overview_table)
+
+    console.print(Panel.fit("Tool Results", style="bold"))
+    for tool in context["tool_results"]:
+        details = Table.grid(padding=(0, 1))
+        details.add_column(style="bold")
+        details.add_column()
+        details.add_row("Status", tool["status"])
+        details.add_row("Why", tool["why"])
+        details.add_row("Command", tool["command_summary"])
+        details.add_row("Raw Output", tool["raw_output_path"])
+        details.add_row("Parsed Output", tool["parsed_output_path"])
+        console.print(Panel(details, title=f"Tool {tool['index']}: {tool['tool']}"))
+        _render_raw_tool_data(tool)
+
+    _render_correlated_findings(context["correlated_findings"])
+    risk_table = Table(title="Overall Risk Score")
+    risk_table.add_column("Score", justify="right")
+    risk_table.add_column("Level")
+    risk_table.add_row(
+        str(context["overall_risk_score"]),
+        context["risk_level"],
+    )
+    console.print(risk_table)
+    _render_report_paths(context["report_paths"])
+
+
+def render_summary_cli_results(context: dict) -> None:
+    """Render a concise executive-style scan summary."""
+    console.print(Panel.fit("Summary Scan Results", style="bold cyan"))
+    overview = context["scan_overview"]
+    overview_table = Table(title="Scan Overview")
+    overview_table.add_column("Field", style="bold")
+    overview_table.add_column("Value")
+    overview_table.add_row("Target", overview["target"])
+    overview_table.add_row("Target Type", overview["target_type"])
+    overview_table.add_row("Scan Mode", overview["scan_mode"])
+    overview_table.add_row("Scan Time", overview["scan_time"])
+    overview_table.add_row("Overall Risk Score", str(overview["overall_risk_score"]))
+    overview_table.add_row("Risk Level", overview["risk_level"])
+    console.print(overview_table)
+
+    if context["key_findings"]["items"]:
+        key_table = Table(title="Key Findings")
+        key_table.add_column("Finding")
+        for item in context["key_findings"]["items"]:
+            key_table.add_row(item)
+        console.print(key_table)
+
+    if context["security_observations"]:
+        observations_table = Table(title="Security-Relevant Observations")
+        observations_table.add_column("Type", style="bold")
+        observations_table.add_column("Observation")
+        for observation in context["security_observations"]:
+            observations_table.add_row(
+                observation["type"],
+                f"{observation['title']} - {observation['detail']}",
+            )
+        console.print(observations_table)
+
+    if context["vulnerability_summary"]:
+        vulnerability_table = Table(title="Vulnerability Summary")
+        vulnerability_table.add_column("Severity", style="bold")
+        vulnerability_table.add_column("Finding")
+        vulnerability_table.add_column("Affected")
+        for severity, vulnerabilities in context["vulnerability_summary"].items():
+            for vulnerability in vulnerabilities:
+                vulnerability_table.add_row(
+                    severity,
+                    vulnerability["name"],
+                    vulnerability["affected"],
+                )
+        console.print(vulnerability_table)
+
+    if context["correlated_findings"]:
+        correlated_table = Table(title="Correlated Risk Findings")
+        correlated_table.add_column("Severity", style="bold")
+        correlated_table.add_column("Finding")
+        correlated_table.add_column("Affected")
+        correlated_table.add_column("Risk", justify="right")
+        for finding in context["correlated_findings"]:
+            correlated_table.add_row(
+                finding["severity"],
+                finding["title"],
+                finding["affected"],
+                str(finding["risk_score"]),
+            )
+        console.print(correlated_table)
+
+    actions_table = Table(title="Recommended Next Actions")
+    actions_table.add_column("Action")
+    for action in context["recommended_actions"]:
+        actions_table.add_row(action)
+    console.print(actions_table)
+
+    execution_table = Table(title="Tool Execution Summary")
+    execution_table.add_column("Status", style="bold")
+    execution_table.add_column("Tools")
+    tool_summary = context["tool_execution_summary"]
+    execution_table.add_row(
+        "Completed",
+        ", ".join(tool_summary["completed_tools"]) or "-",
+    )
+    execution_table.add_row("Skipped", ", ".join(tool_summary["skipped_tools"]) or "-")
+    execution_table.add_row("Missing", ", ".join(tool_summary["missing_tools"]) or "-")
+    execution_table.add_row("Failed", ", ".join(tool_summary["failed_tools"]) or "-")
+    execution_table.add_row(
+        "Timed out",
+        ", ".join(tool_summary["timed_out_tools"]) or "-",
+    )
+    console.print(execution_table)
+    _render_report_paths(context["report_paths"])
+
+
+def _render_raw_tool_data(tool: dict) -> None:
+    if tool["result_count"] == 0:
+        console.print("[dim]No results found[/dim]")
+        return
+
+    result_type = tool["result_type"]
+    if result_type == "subdomains":
+        table = Table(title="Discovered Subdomains")
+        table.add_column("Subdomain")
+        for subdomain in tool["results"]:
+            table.add_row(str(subdomain))
+    elif result_type == "assets":
+        table = Table(title="Resolved Assets")
+        table.add_column("Hostname")
+        table.add_column("IP")
+        table.add_column("Record Type")
+        for asset in tool["results"]:
+            table.add_row(
+                str(asset.get("hostname", "-")),
+                str(asset.get("ip") or "-"),
+                str(asset.get("record_type") or "-"),
+            )
+    elif result_type == "services":
+        table = Table(title="Open Ports and Services")
+        table.add_column("Host")
+        table.add_column("Port")
+        table.add_column("Service")
+        table.add_column("Product")
+        for service in tool["results"]:
+            table.add_row(
+                str(service.get("host", "-")),
+                f"{service.get('port', '-')}/{service.get('protocol', 'tcp')}",
+                str(service.get("service_name") or "-"),
+                str(service.get("product") or "-"),
+            )
+    elif result_type == "live_hosts":
+        table = Table(title="Live Web Services")
+        table.add_column("URL")
+        table.add_column("Status")
+        table.add_column("Title")
+        table.add_column("Technologies")
+        for host in tool["results"]:
+            table.add_row(
+                str(host.get("url", "-")),
+                str(host.get("status_code") or "-"),
+                str(host.get("title") or "-"),
+                ", ".join(host.get("technologies") or []) or "-",
+            )
+    elif result_type == "technologies":
+        table = Table(title="Technologies Detected")
+        table.add_column("Host")
+        table.add_column("Technology")
+        table.add_column("Version")
+        table.add_column("Category")
+        for technology in tool["results"]:
+            table.add_row(
+                str(technology.get("host", "-")),
+                str(technology.get("name", "-")),
+                str(technology.get("version") or "-"),
+                str(technology.get("category") or "-"),
+            )
+    elif result_type == "endpoints":
+        table = Table(title="Endpoints Discovered")
+        table.add_column("URL")
+        table.add_column("Status")
+        table.add_column("Interesting")
+        for endpoint in tool["results"]:
+            table.add_row(
+                str(endpoint.get("url", "-")),
+                str(endpoint.get("status_code") or "-"),
+                str(endpoint.get("interesting", False)),
+            )
+    elif result_type == "crawled_urls":
+        table = Table(title="Crawled URLs")
+        table.add_column("URL")
+        table.add_column("Path")
+        for crawled_url in tool["results"]:
+            table.add_row(
+                str(crawled_url.get("url", "-")),
+                str(crawled_url.get("path") or "-"),
+            )
+    elif result_type == "vulnerabilities":
+        table = Table(title="Vulnerability Summary")
+        table.add_column("Severity")
+        table.add_column("Count", justify="right")
+        for severity, vulnerabilities in tool["vulnerabilities_by_severity"].items():
+            table.add_row(f"{severity} Findings", str(len(vulnerabilities)))
+    elif result_type == "screenshots":
+        table = Table(title="Screenshots Captured")
+        table.add_column("URL")
+        table.add_column("Screenshot Path")
+        table.add_column("Status")
+        for screenshot in tool["results"]:
+            table.add_row(
+                str(screenshot.get("url", "-")),
+                str(screenshot.get("screenshot_path") or "-"),
+                str(screenshot.get("status") or "-"),
+            )
+    else:
+        console.print("[dim]No results found[/dim]")
+        return
+
+    console.print(table)
+
+
+def _render_correlated_findings(findings: list) -> None:
+    table = Table(title="Correlated Findings")
+    table.add_column("Severity", style="bold")
+    table.add_column("Finding")
+    table.add_column("Host/URL")
+    table.add_column("Risk", justify="right")
+    if not findings:
+        table.add_row("-", "No correlated findings were generated.", "-", "0")
+    else:
+        for finding in findings:
+            table.add_row(
+                str(finding.get("severity", "-")),
+                str(finding.get("title", "-")),
+                str(finding.get("affected_url") or finding.get("affected_host", "-")),
+                str(finding.get("risk_score", 0)),
+            )
+    console.print(table)
+
+
+def _render_report_paths(report_paths: dict) -> None:
+    report_table = Table(title="Report Paths")
+    report_table.add_column("Report", style="bold")
+    report_table.add_column("Path")
+    report_table.add_row("Raw", report_paths["raw_report"])
+    report_table.add_row("Summary", report_paths["summary_report"])
+    report_table.add_row("JSON", report_paths["json_report"])
+    console.print(report_table)
+
+
 @app.callback()
 def callback() -> None:
     """ReconFlow command group callback."""
@@ -321,6 +620,11 @@ def scan(
         "--wordlist",
         help="Wordlist for Feroxbuster content discovery.",
     ),
+    view: str = typer.Option(
+        "raw",
+        "--view",
+        help="Result view for terminal output: raw or summary.",
+    ),
 ) -> None:
     """Validate and prepare a placeholder recon scan workflow for a target."""
     config = load_config()
@@ -343,6 +647,12 @@ def scan(
             f"Could not parse target: {target}\nUse a domain, IP address, or URL.",
         )
         raise typer.Exit(code=1)
+
+    try:
+        selected_view = _normalize_result_view(view)
+    except ValueError as exc:
+        _print_error_panel("Invalid View", str(exc))
+        raise typer.Exit(code=1) from exc
 
     try:
         workflow_steps = get_workflow_steps(selected_mode, config.enabled_tools)
@@ -371,7 +681,8 @@ def scan(
     selected_wordlist_path = wordlist or config.wordlist_path
     raw_subfinder_path = scan_folder / "raw" / "subfinder.txt"
     parsed_subdomains_path = scan_folder / "parsed" / "subdomains.json"
-    subfinder_command = build_subfinder_command(scan_target.value, raw_subfinder_path)
+    subfinder_target = select_subfinder_domain(scan_target.value)
+    subfinder_command = build_subfinder_command(subfinder_target, raw_subfinder_path)
     subdomains: list[str] = []
     subfinder_result = None
     raw_dnsx_path = scan_folder / "raw" / "dnsx.jsonl"
@@ -412,6 +723,7 @@ def scan(
     for workflow_step in workflow_steps:
         tool_name = workflow_step.name
         decision = orchestrator.decide(tool_name, workflow_state)
+        _record_tool_decision(metadata, decision)
         if explain:
             _print_workflow_decision(decision)
         if not decision.should_run:
@@ -430,7 +742,7 @@ def scan(
                 continue
 
             subfinder_result = run_subfinder(
-                scan_target.value,
+                subfinder_target,
                 scan_folder,
                 timeout=config.tool_timeouts.get("subfinder"),
             )
@@ -502,6 +814,11 @@ def scan(
                 continue
             if nmap_result.exit_code == 0 and raw_nmap_path.exists():
                 services = parse_nmap_xml(raw_nmap_path)
+                workflow_state.nmap_web_ports = [
+                    service.port
+                    for service in services
+                    if service.port in {80, 443, 8080, 8443, 8000, 8888}
+                ]
                 save_services_json(services, parsed_services_path)
                 _mark_tool_completed(metadata, "nmap")
                 write_scan_metadata(scan_folder, metadata)
@@ -684,142 +1001,14 @@ def scan(
     metadata["overall_risk_score"] = overall_risk_score
     metadata["findings_count"] = len(findings)
     write_scan_metadata(scan_folder, metadata)
-    generated_reports = {}
     if has_parsed_data(scan_folder):
-        generated_reports = generate_reports(scan_folder, "all")
+        generate_all_report_views(scan_folder)
 
-    table = Table(title="ReconFlow Scan Summary")
-    table.add_column("Field", style="bold")
-    table.add_column("Value")
-    table.add_row("Scan ID", metadata["scan_id"])
-    table.add_row("Target", scan_target.value)
-    table.add_row("Detected Target Type", scan_target.kind)
-    table.add_row("Selected Scan Mode", selected_mode)
-    table.add_row("Authorization Status", "Authorized")
-    table.add_row("Output Directory", metadata["output_dir"])
-    table.add_row("Subdomains", str(len(subdomains)))
-    table.add_row(
-        "Parsed Subdomains Path",
-        str(parsed_subdomains_path) if parsed_subdomains_path.exists() else "-",
-    )
-    if subfinder_result is not None:
-        table.add_row("Subfinder Exit Code", str(subfinder_result.exit_code))
-    table.add_row("Resolved Assets", str(len(assets)))
-    table.add_row(
-        "Parsed Assets Path",
-        str(parsed_assets_path) if parsed_assets_path.exists() else "-",
-    )
-    if dnsx_result is not None:
-        table.add_row("dnsx Exit Code", str(dnsx_result.exit_code))
-    table.add_row("Open Ports", str(len(services)))
-    table.add_row(
-        "Detected Services",
-        ", ".join(
-            f"{service.port}/{service.protocol} {service.service_name}"
-            for service in services
-        )
-        or "-",
-    )
-    table.add_row("Raw Output Path", str(raw_nmap_path))
-    table.add_row(
-        "Parsed Output Path",
-        str(parsed_services_path) if parsed_services_path.exists() else "-",
-    )
-    if nmap_result is not None:
-        table.add_row("Nmap Exit Code", str(nmap_result.exit_code))
-    table.add_row("Live Web Services", str(len(live_hosts)))
-    table.add_row(
-        "Status Codes",
-        ", ".join(
-            str(live_host.status_code)
-            for live_host in live_hosts
-            if live_host.status_code is not None
-        )
-        or "-",
-    )
-    table.add_row(
-        "Titles",
-        ", ".join(live_host.title for live_host in live_hosts if live_host.title)
-        or "-",
-    )
-    table.add_row("httpx Raw Output Path", str(raw_httpx_path))
-    table.add_row(
-        "httpx Parsed Output Path",
-        str(parsed_live_hosts_path) if parsed_live_hosts_path.exists() else "-",
-    )
-    if httpx_result is not None:
-        table.add_row("httpx Exit Code", str(httpx_result.exit_code))
-    table.add_row("Technologies Detected", str(len(technologies)))
-    table.add_row("Top Technologies by Host", _top_technologies_by_host(technologies))
-    table.add_row(
-        "Technologies Path",
-        str(parsed_technologies_path) if parsed_technologies_path.exists() else "-",
-    )
-    if whatweb_result is not None:
-        table.add_row("WhatWeb Exit Code", str(whatweb_result.exit_code))
-    table.add_row("Endpoints Discovered", str(len(endpoints)))
-    table.add_row(
-        "Interesting Endpoints",
-        str(sum(1 for endpoint in endpoints if endpoint.interesting)),
-    )
-    table.add_row(
-        "Endpoints Path",
-        str(parsed_endpoints_path) if parsed_endpoints_path.exists() else "-",
-    )
-    if feroxbuster_result is not None:
-        table.add_row("Feroxbuster Exit Code", str(feroxbuster_result.exit_code))
-    table.add_row("Crawled URLs", str(len(crawled_urls)))
-    table.add_row(
-        "Crawled URLs Path",
-        str(parsed_crawled_urls_path) if parsed_crawled_urls_path.exists() else "-",
-    )
-    if katana_result is not None:
-        table.add_row("Katana Exit Code", str(katana_result.exit_code))
-    severity_counts = _severity_counts(vulnerabilities)
-    table.add_row("Informational Findings", str(severity_counts["informational"]))
-    table.add_row("Low Findings", str(severity_counts["low"]))
-    table.add_row("Medium Findings", str(severity_counts["medium"]))
-    table.add_row("High Findings", str(severity_counts["high"]))
-    table.add_row("Critical Findings", str(severity_counts["critical"]))
-    table.add_row(
-        "Vulnerabilities Path",
-        (
-            str(parsed_vulnerabilities_path)
-            if parsed_vulnerabilities_path.exists()
-            else "-"
-        ),
-    )
-    if nuclei_result is not None:
-        table.add_row("Nuclei Exit Code", str(nuclei_result.exit_code))
-    table.add_row(
-        "Screenshots Captured",
-        str(sum(1 for screenshot in screenshots if screenshot.status == "captured")),
-    )
-    table.add_row("Screenshot Folder", str(screenshots_dir))
-    table.add_row(
-        "Screenshots Path",
-        str(parsed_screenshots_path) if parsed_screenshots_path.exists() else "-",
-    )
-    if gowitness_result is not None:
-        table.add_row("Gowitness Exit Code", str(gowitness_result.exit_code))
-    table.add_row("Correlated Findings", str(len(findings)))
-    table.add_row("Overall Risk Score", str(overall_risk_score))
-    table.add_row("Findings Path", str(parsed_findings_path))
-    if generated_reports:
-        table.add_row("Reports Generated", ", ".join(generated_reports))
+    if selected_view == "summary":
+        render_summary_cli_results(build_summary_report_context(scan_folder))
+    else:
+        render_raw_cli_results(build_raw_report_context(scan_folder))
 
-    console.print(table)
-    _print_report_paths(generated_reports)
-    _print_findings_summary(findings)
-
-    workflow_table = Table(title="Planned Workflow")
-    workflow_table.add_column("Step", justify="right")
-    workflow_table.add_column("Tool", style="bold")
-    workflow_table.add_column("Purpose")
-    for index, step in enumerate(workflow_steps, start=1):
-        workflow_table.add_row(str(index), step.name, step.description)
-
-    console.print(workflow_table)
     if dry_run:
         console.print("Dry run complete. No external security tools were executed.")
 
@@ -886,6 +1075,11 @@ def report(
         "--format",
         help="Report format to generate: markdown, html, json, or all.",
     ),
+    view: str = typer.Option(
+        "summary",
+        "--view",
+        help="Report view to generate: raw or summary.",
+    ),
 ) -> None:
     """Generate reports for an existing scan."""
     config = load_config()
@@ -904,14 +1098,16 @@ def report(
         raise typer.Exit(code=1)
 
     try:
-        generated_reports = generate_reports(scan_folder, report_format)
+        selected_view = _normalize_result_view(view)
+        generated_reports = generate_reports(scan_folder, report_format, selected_view)
     except ValueError as exc:
-        _print_error_panel("Invalid Report Format", str(exc))
+        _print_error_panel("Invalid Report Request", str(exc))
         raise typer.Exit(code=1) from exc
 
     for generated_format, path in generated_reports.items():
         console.print(
-            f"Generated {generated_format} report for [bold]{scan_id}[/bold]: {path}"
+            f"Generated {generated_format} report ({selected_view} view) "
+            f"for [bold]{scan_id}[/bold]: {path}"
         )
 
 

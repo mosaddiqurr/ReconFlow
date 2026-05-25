@@ -33,7 +33,7 @@ def test_build_dnsx_command() -> None:
 
 
 def test_write_dnsx_input() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         input_path = Path(tmp_dir) / "raw" / "dnsx_input.txt"
 
         saved_path = write_dnsx_input(
@@ -47,7 +47,7 @@ def test_write_dnsx_input() -> None:
 
 
 def test_parse_dnsx_jsonl_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         jsonl_path = Path(tmp_dir) / "dnsx.jsonl"
         jsonl_path.write_text(SAMPLE_DNSX_JSONL, encoding="utf-8")
 
@@ -68,7 +68,7 @@ def test_parse_dnsx_jsonl_fixture() -> None:
 
 
 def test_save_assets_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         jsonl_path = temp_path / "dnsx.jsonl"
         output_path = temp_path / "parsed" / "assets.json"

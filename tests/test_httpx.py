@@ -54,7 +54,7 @@ def test_build_httpx_command_multiple_inputs() -> None:
 
 
 def test_parse_httpx_jsonl_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         jsonl_path = Path(tmp_dir) / "httpx.jsonl"
         jsonl_path.write_text(SAMPLE_HTTPX_JSONL, encoding="utf-8")
 
@@ -75,7 +75,7 @@ def test_parse_httpx_jsonl_fixture() -> None:
 
 
 def test_save_live_hosts_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         jsonl_path = temp_path / "httpx.jsonl"
         output_path = temp_path / "parsed" / "live_hosts.json"

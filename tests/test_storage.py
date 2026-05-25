@@ -10,7 +10,7 @@ from reconflow.core.storage import (
 
 
 def test_scan_folder_creation() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         metadata = create_scan_folder(
             target="example.com",
@@ -32,7 +32,7 @@ def test_scan_folder_creation() -> None:
 
 
 def test_metadata_writing() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         metadata = create_scan_folder(
             target="example.com",
@@ -58,7 +58,7 @@ def test_metadata_writing() -> None:
 
 
 def test_metadata_reading() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         scan_dir = temp_path / "scans" / "scan_001_example_com"
         scan_dir.mkdir(parents=True)

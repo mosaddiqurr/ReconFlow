@@ -35,7 +35,7 @@ SAMPLE_FEROXBUSTER_JSONL = """{"type":"response","url":"https://example.com/admi
 
 
 def test_load_feroxbuster_targets_from_live_hosts() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         live_hosts_path = Path(tmp_dir) / "live_hosts.json"
         live_hosts_path.write_text(SAMPLE_LIVE_HOSTS_JSON, encoding="utf-8")
 
@@ -87,7 +87,7 @@ def test_interesting_path_markers() -> None:
 
 
 def test_parse_feroxbuster_json_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         output_path = Path(tmp_dir) / "feroxbuster.json"
         output_path.write_text(SAMPLE_FEROXBUSTER_JSONL, encoding="utf-8")
 
@@ -109,7 +109,7 @@ def test_parse_feroxbuster_json_fixture() -> None:
 
 
 def test_save_endpoints_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         output_path = temp_path / "feroxbuster.json"
         endpoints_path = temp_path / "parsed" / "endpoints.json"

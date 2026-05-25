@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>ReconFlow Raw Report {{ scan_id }}</title>
+    <style>
+      body {
+        color: #1f2933;
+        font-family: Arial, sans-serif;
+        line-height: 1.5;
+        margin: 32px;
+      }
+      h1, h2, h3, h4 {
+        color: #111827;
+      }
+      section {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 16px 0;
+      }
+      code {
+        background: #f3f4f6;
+        padding: 2px 4px;
+      }
+      li {
+        margin-bottom: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ReconFlow Raw Report</h1>
+    <p><strong>Scan ID:</strong> {{ scan_id }}</p>
+
+    <section>
+      <h2>Scan Overview</h2>
+      <ul>
+        <li>Target: {{ scan_overview.target }}</li>
+        <li>Target type: {{ scan_overview.target_type }}</li>
+        <li>Scan mode: {{ scan_overview.scan_mode }}</li>
+        <li>Scan time: {{ scan_overview.scan_time }}</li>
+        <li>Overall risk score: {{ overall_risk_score }}/100</li>
+        <li>Risk level: {{ risk_level }}</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Tool Results</h2>
+      {% for tool in tool_results %}
+      <article>
+        <h3>Tool {{ tool.index }}: {{ tool.tool }}</h3>
+        <ul>
+          <li>Status: {{ tool.status }}</li>
+          <li>Why: {{ tool.why }}</li>
+          <li>Command summary: <code>{{ tool.command_summary }}</code></li>
+          <li>Raw output file path: {{ tool.raw_output_path }}</li>
+          <li>Parsed output file path: {{ tool.parsed_output_path }}</li>
+        </ul>
+
+        {% if tool.result_count == 0 %}
+        <p>No results found.</p>
+        {% elif tool.result_type == "subdomains" %}
+        <ul>{% for subdomain in tool.results %}<li>{{ subdomain }}</li>{% endfor %}</ul>
+        {% elif tool.result_type == "assets" %}
+        <ul>{% for asset in tool.results %}<li>{{ asset.hostname }} - {{ asset.ip or "-" }} ({{ asset.record_type or "-" }})</li>{% endfor %}</ul>
+        {% elif tool.result_type == "services" %}
+        <ul>{% for service in tool.results %}<li>{{ service.host }} {{ service.protocol }}/{{ service.port }} {{ service.service_name or "-" }} {{ service.product or "" }}</li>{% endfor %}</ul>
+        {% elif tool.result_type == "live_hosts" %}
+        <ul>{% for host in tool.results %}<li>{{ host.url }} ({{ host.status_code or "-" }}) {{ host.title or "" }}{% if host.technologies %} - {{ host.technologies | join(", ") }}{% endif %}</li>{% endfor %}</ul>
+        {% elif tool.result_type == "technologies" %}
+        <ul>{% for technology in tool.results %}<li>{{ technology.host }}: {{ technology.name }} {{ technology.version or "" }}{% if technology.category %} ({{ technology.category }}){% endif %}</li>{% endfor %}</ul>
+        {% elif tool.result_type == "endpoints" %}
+        <ul>{% for endpoint in tool.results %}<li>{{ endpoint.url }} ({{ endpoint.status_code or "-" }}){% if endpoint.interesting %} [interesting]{% endif %}</li>{% endfor %}</ul>
+        {% elif tool.result_type == "crawled_urls" %}
+        <ul>{% for url in tool.results %}<li>{{ url.url }}{% if url.interesting %} [interesting]{% endif %}</li>{% endfor %}</ul>
+        {% elif tool.result_type == "vulnerabilities" %}
+        {% for severity, vulnerabilities in tool.vulnerabilities_by_severity.items() %}
+        <h4>{{ severity }}</h4>
+        <ul>{% for vulnerability in vulnerabilities %}<li>{{ vulnerability.name }} on {{ vulnerability.matched_url or vulnerability.host }} ({{ vulnerability.template_id or "-" }})</li>{% endfor %}</ul>
+        {% endfor %}
+        {% elif tool.result_type == "screenshots" %}
+        <ul>{% for screenshot in tool.results %}<li>{{ screenshot.url }} - {{ screenshot.screenshot_path or "missing" }} ({{ screenshot.status }})</li>{% endfor %}</ul>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </section>
+
+    <section>
+      <h2>Correlated Findings</h2>
+      {% if correlated_findings %}
+      <ul>
+        {% for finding in correlated_findings %}
+        <li><strong>{{ finding.severity }}:</strong> {{ finding.title }} affecting {{ finding.affected_url or finding.affected_host }} (risk score {{ finding.risk_score }})</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p>No correlated findings were generated.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Overall Risk Score</h2>
+      <p>{{ overall_risk_score }}/100</p>
+    </section>
+
+    <section>
+      <h2>Report Paths</h2>
+      <ul>
+        <li>Raw report path: {{ report_paths.raw_report }}</li>
+        <li>Summary report path: {{ report_paths.summary_report }}</li>
+        <li>JSON report path: {{ report_paths.raw_json_report }}</li>
+      </ul>
+    </section>
+  </body>
+</html>

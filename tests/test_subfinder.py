@@ -5,6 +5,7 @@ from reconflow.tools.subfinder import (
     build_subfinder_command,
     parse_subfinder_output,
     save_subdomains_json,
+    select_subfinder_domain,
 )
 
 
@@ -31,8 +32,13 @@ def test_build_subfinder_command() -> None:
     ]
 
 
+def test_select_subfinder_domain_strips_www_prefix_when_possible() -> None:
+    assert select_subfinder_domain("www.micratto.com") == "micratto.com"
+    assert select_subfinder_domain("api.micratto.com") == "api.micratto.com"
+
+
 def test_parse_subfinder_output_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         output_path = Path(tmp_dir) / "subfinder.txt"
         output_path.write_text(SAMPLE_SUBFINDER_OUTPUT, encoding="utf-8")
 
@@ -42,7 +48,7 @@ def test_parse_subfinder_output_fixture() -> None:
 
 
 def test_save_subdomains_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         output_path = temp_path / "parsed" / "subdomains.json"
 

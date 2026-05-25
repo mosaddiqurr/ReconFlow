@@ -65,7 +65,7 @@ def test_httpx_uses_resolved_hosts_when_available() -> None:
     assert decision.input_description == "parsed/assets.json"
 
 
-def test_httpx_skips_when_dnsx_planned_without_resolved_hosts() -> None:
+def test_httpx_falls_back_to_original_target_without_resolved_hosts() -> None:
     state = WorkflowState(
         target="example.com",
         target_type="domain",
@@ -75,8 +75,38 @@ def test_httpx_skips_when_dnsx_planned_without_resolved_hosts() -> None:
 
     decision = Orchestrator().decide("httpx", state)
 
-    assert decision.should_run is False
-    assert decision.skip_reason == "No resolved hosts are available."
+    assert decision.should_run is True
+    assert decision.input_description == "example.com"
+
+
+def test_httpx_runs_directly_for_url_targets() -> None:
+    state = WorkflowState(
+        target="https://example.com",
+        target_type="url",
+        mode="standard",
+        planned_tools=["httpx"],
+    )
+
+    decision = Orchestrator().decide("httpx", state)
+
+    assert decision.should_run is True
+    assert decision.input_description == "https://example.com"
+
+
+def test_httpx_fallback_notes_nmap_web_ports() -> None:
+    state = WorkflowState(
+        target="example.com",
+        target_type="domain",
+        mode="deep",
+        planned_tools=["dnsx", "nmap", "httpx"],
+        nmap_web_ports=[80, 443],
+    )
+
+    decision = Orchestrator().decide("httpx", state)
+
+    assert decision.should_run is True
+    assert decision.input_description == "example.com"
+    assert "Nmap found web ports" in decision.reason
 
 
 def test_live_web_tools_run_only_with_live_hosts() -> None:

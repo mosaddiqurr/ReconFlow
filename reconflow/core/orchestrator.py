@@ -14,6 +14,7 @@ class WorkflowState:
     subdomains: list[str] = field(default_factory=list)
     resolved_hosts: list[str] = field(default_factory=list)
     live_hosts: list[str] = field(default_factory=list)
+    nmap_web_ports: list[int] = field(default_factory=list)
 
     @property
     def live_web_hosts(self) -> list[str]:
@@ -118,6 +119,15 @@ class Orchestrator:
         )
 
     def _httpx(self, tool_name: str, state: WorkflowState) -> WorkflowDecision:
+        if state.target_type == "url":
+            return WorkflowDecision(
+                tool_name=tool_name,
+                should_run=True,
+                reason="URL targets can be probed directly by httpx.",
+                input_description=state.target,
+                output_description="raw/httpx.jsonl and parsed/live_hosts.json",
+            )
+
         if state.resolved_hosts:
             return WorkflowDecision(
                 tool_name=tool_name,
@@ -127,22 +137,24 @@ class Orchestrator:
                 output_description="raw/httpx.jsonl and parsed/live_hosts.json",
             )
 
-        if "dnsx" not in state.planned_tools:
+        if state.nmap_web_ports:
             return WorkflowDecision(
                 tool_name=tool_name,
                 should_run=True,
-                reason="No DNS-resolution step is planned, so the original target is probed.",
+                reason=(
+                    "Nmap found web ports, so the original target is probed even "
+                    "without resolved DNS assets."
+                ),
                 input_description=state.target,
                 output_description="raw/httpx.jsonl and parsed/live_hosts.json",
             )
 
         return WorkflowDecision(
             tool_name=tool_name,
-            should_run=False,
-            reason="httpx requires resolved hosts when DNS resolution is planned.",
-            input_description="parsed/assets.json",
+            should_run=True,
+            reason="No resolved hosts are available, so the original target is probed.",
+            input_description=state.target,
             output_description="raw/httpx.jsonl and parsed/live_hosts.json",
-            skip_reason="No resolved hosts are available.",
         )
 
     def _nmap(self, tool_name: str, state: WorkflowState) -> WorkflowDecision:

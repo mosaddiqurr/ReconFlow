@@ -40,7 +40,7 @@ def test_build_nmap_command() -> None:
 
 
 def test_parse_nmap_xml_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         xml_path = Path(tmp_dir) / "nmap.xml"
         xml_path.write_text(SAMPLE_NMAP_XML, encoding="utf-8")
 
@@ -59,7 +59,7 @@ def test_parse_nmap_xml_fixture() -> None:
 
 
 def test_save_services_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         xml_path = temp_path / "nmap.xml"
         output_path = temp_path / "parsed" / "services.json"

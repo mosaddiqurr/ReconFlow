@@ -33,7 +33,7 @@ SAMPLE_NUCLEI_JSONL = """{"template-id":"tech-detect","host":"https://example.co
 
 
 def test_load_nuclei_targets_from_live_hosts() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         live_hosts_path = Path(tmp_dir) / "live_hosts.json"
         live_hosts_path.write_text(SAMPLE_LIVE_HOSTS_JSON, encoding="utf-8")
 
@@ -43,7 +43,7 @@ def test_load_nuclei_targets_from_live_hosts() -> None:
 
 
 def test_write_nuclei_input() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         input_path = Path(tmp_dir) / "raw" / "nuclei_input.txt"
 
         saved_path = write_nuclei_input(
@@ -86,7 +86,7 @@ def test_build_nuclei_command_uses_safe_defaults() -> None:
 
 
 def test_parse_nuclei_jsonl_fixture() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         jsonl_path = Path(tmp_dir) / "nuclei.jsonl"
         jsonl_path.write_text(SAMPLE_NUCLEI_JSONL, encoding="utf-8")
 
@@ -110,7 +110,7 @@ def test_parse_nuclei_jsonl_fixture() -> None:
 
 
 def test_save_vulnerabilities_json() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         jsonl_path = temp_path / "nuclei.jsonl"
         vulnerabilities_path = temp_path / "parsed" / "vulnerabilities.json"

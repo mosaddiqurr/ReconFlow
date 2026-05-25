@@ -43,7 +43,7 @@ def test_run_command_timeout_behavior() -> None:
 
 
 def test_run_command_writes_output_files() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         stdout_path = Path(tmp_dir) / "stdout.txt"
         stderr_path = Path(tmp_dir) / "stderr.txt"
 

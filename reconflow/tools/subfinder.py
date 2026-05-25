@@ -4,7 +4,18 @@ import json
 from pathlib import Path
 
 from reconflow.core.runner import run_command
+from reconflow.core.validator import detect_target_type
 from reconflow.tools.base import ToolAdapter
+
+
+def select_subfinder_domain(target: str) -> str:
+    """Use an apex-like domain for common www hostnames."""
+    normalized_target = target.strip()
+    if normalized_target.lower().startswith("www."):
+        candidate = normalized_target[4:].lower()
+        if detect_target_type(candidate) == "domain":
+            return candidate
+    return normalized_target
 
 
 def build_subfinder_command(target: str, output_path: str | Path) -> list[str]:
@@ -41,7 +52,7 @@ def run_subfinder(
 ):
     """Run Subfinder for a domain target using the shared command runner."""
     raw_output_path = Path(scan_folder) / "raw" / "subfinder.txt"
-    command = build_subfinder_command(target, raw_output_path)
+    command = build_subfinder_command(select_subfinder_domain(target), raw_output_path)
     return run_command("subfinder", command, timeout=timeout)
 
 

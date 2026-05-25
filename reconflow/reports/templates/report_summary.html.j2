@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>ReconFlow Summary Report {{ scan_id }}</title>
+    <style>
+      body {
+        color: #1f2933;
+        font-family: Arial, sans-serif;
+        line-height: 1.5;
+        margin: 32px;
+      }
+      h1, h2, h3 {
+        color: #111827;
+      }
+      section {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 16px 0;
+      }
+      .overview {
+        display: grid;
+        gap: 8px 24px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+      .label {
+        color: #4b5563;
+        font-size: 0.85rem;
+      }
+      .value {
+        font-weight: 700;
+      }
+      li {
+        margin-bottom: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ReconFlow Summary Report</h1>
+    <p><strong>Scan ID:</strong> {{ scan_id }}</p>
+
+    <section>
+      <h2>Scan Overview</h2>
+      <div class="overview">
+        <div><div class="label">Target</div><div class="value">{{ scan_overview.target }}</div></div>
+        <div><div class="label">Target type</div><div class="value">{{ scan_overview.target_type }}</div></div>
+        <div><div class="label">Scan mode</div><div class="value">{{ scan_overview.scan_mode }}</div></div>
+        <div><div class="label">Scan time</div><div class="value">{{ scan_overview.scan_time }}</div></div>
+        <div><div class="label">Overall risk score</div><div class="value">{{ scan_overview.overall_risk_score }}/100</div></div>
+        <div><div class="label">Risk level</div><div class="value">{{ scan_overview.risk_level }}</div></div>
+      </div>
+    </section>
+
+    {% if key_findings["items"] %}
+    <section>
+      <h2>Key Findings</h2>
+      <ul>
+        {% for item in key_findings["items"] %}
+        <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if security_observations %}
+    <section>
+      <h2>Security-Relevant Observations</h2>
+      <ul>
+        {% for observation in security_observations %}
+        <li><strong>{{ observation.type }}:</strong> {{ observation.title }} - {{ observation.detail }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if vulnerability_summary %}
+    <section>
+      <h2>Vulnerability Summary</h2>
+      {% for severity, vulnerabilities in vulnerability_summary.items() %}
+      <h3>{{ severity }}</h3>
+      <ul>
+        {% for vulnerability in vulnerabilities %}
+        <li><strong>{{ vulnerability.name }}</strong> affecting {{ vulnerability.affected }}. {{ vulnerability.reason }} Recommended action: {{ vulnerability.recommended_action }}</li>
+        {% endfor %}
+      </ul>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if correlated_findings %}
+    <section>
+      <h2>Correlated Risk Findings</h2>
+      <ul>
+        {% for finding in correlated_findings %}
+        <li><strong>{{ finding.severity }}:</strong> {{ finding.title }} affecting {{ finding.affected }} (risk score {{ finding.risk_score }}). {{ finding.explanation }} Recommended action: {{ finding.recommended_action }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <section>
+      <h2>Recommended Next Actions</h2>
+      <ul>
+        {% for action in recommended_actions %}
+        <li>{{ action }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section>
+      <h2>Tool Execution Summary</h2>
+      <ul>
+        {% if tool_execution_summary.completed_tools %}<li>Completed tools: {{ tool_execution_summary.completed_tools | join(", ") }}</li>{% endif %}
+        {% if tool_execution_summary.skipped_tools %}<li>Skipped tools: {{ tool_execution_summary.skipped_tools | join(", ") }}</li>{% endif %}
+        {% if tool_execution_summary.missing_tools %}<li>Missing tools: {{ tool_execution_summary.missing_tools | join(", ") }}</li>{% endif %}
+        {% if tool_execution_summary.failed_tools %}<li>Failed tools: {{ tool_execution_summary.failed_tools | join(", ") }}</li>{% endif %}
+        {% if tool_execution_summary.timed_out_tools %}<li>Timed-out tools: {{ tool_execution_summary.timed_out_tools | join(", ") }}</li>{% endif %}
+        {% if not tool_execution_summary.completed_tools and not tool_execution_summary.skipped_tools and not tool_execution_summary.missing_tools and not tool_execution_summary.failed_tools and not tool_execution_summary.timed_out_tools %}<li>No tool execution details were recorded.</li>{% endif %}
+      </ul>
+    </section>
+
+    <section>
+      <h2>Report Paths</h2>
+      <ul>
+        <li>Raw report path: {{ report_paths.raw_report }}</li>
+        <li>Summary report path: {{ report_paths.summary_report }}</li>
+        <li>JSON report path: {{ report_paths.json_report }}</li>
+      </ul>
+    </section>
+  </body>
+</html>

@@ -1,0 +1,88 @@
+# ReconFlow Raw Report
+
+Scan ID: {{ scan_id }}
+
+## Scan Overview
+
+- Target: {{ scan_overview.target }}
+- Target type: {{ scan_overview.target_type }}
+- Scan mode: {{ scan_overview.scan_mode }}
+- Scan time: {{ scan_overview.scan_time }}
+- Overall risk score: {{ overall_risk_score }}/100
+- Risk level: {{ risk_level }}
+
+## Tool Results
+
+{% for tool in tool_results %}
+### Tool {{ tool.index }}: {{ tool.tool }}
+
+- Status: {{ tool.status }}
+- Why: {{ tool.why }}
+- Command summary: {{ tool.command_summary }}
+- Raw output file path: {{ tool.raw_output_path }}
+- Parsed output file path: {{ tool.parsed_output_path }}
+
+{% if tool.result_count == 0 %}
+No results found.
+{% elif tool.result_type == "subdomains" %}
+{% for subdomain in tool.results %}
+- {{ subdomain }}
+{% endfor %}
+{% elif tool.result_type == "assets" %}
+{% for asset in tool.results %}
+- {{ asset.hostname }} -> {{ asset.ip or "-" }} ({{ asset.record_type or "-" }})
+{% endfor %}
+{% elif tool.result_type == "services" %}
+{% for service in tool.results %}
+- {{ service.host }} {{ service.protocol }}/{{ service.port }} {{ service.service_name or "-" }} {{ service.product or "" }}
+{% endfor %}
+{% elif tool.result_type == "live_hosts" %}
+{% for host in tool.results %}
+- {{ host.url }} ({{ host.status_code or "-" }}) {{ host.title or "" }}{% if host.technologies %} - {{ host.technologies | join(", ") }}{% endif %}
+{% endfor %}
+{% elif tool.result_type == "technologies" %}
+{% for technology in tool.results %}
+- {{ technology.host }}: {{ technology.name }} {{ technology.version or "" }}{% if technology.category %} ({{ technology.category }}){% endif %}
+{% endfor %}
+{% elif tool.result_type == "endpoints" %}
+{% for endpoint in tool.results %}
+- {{ endpoint.url }} ({{ endpoint.status_code or "-" }}){% if endpoint.interesting %} [interesting]{% endif %}
+{% endfor %}
+{% elif tool.result_type == "crawled_urls" %}
+{% for url in tool.results %}
+- {{ url.url }}{% if url.interesting %} [interesting]{% endif %}
+{% endfor %}
+{% elif tool.result_type == "vulnerabilities" %}
+{% for severity, vulnerabilities in tool.vulnerabilities_by_severity.items() %}
+#### {{ severity }}
+
+{% for vulnerability in vulnerabilities %}
+- {{ vulnerability.name }} on {{ vulnerability.matched_url or vulnerability.host }} ({{ vulnerability.template_id or "-" }})
+{% endfor %}
+{% endfor %}
+{% elif tool.result_type == "screenshots" %}
+{% for screenshot in tool.results %}
+- {{ screenshot.url }} -> {{ screenshot.screenshot_path or "missing" }} ({{ screenshot.status }})
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+## Correlated Findings
+
+{% if correlated_findings %}
+{% for finding in correlated_findings %}
+- **{{ finding.severity }}:** {{ finding.title }} affecting {{ finding.affected_url or finding.affected_host }} (risk score {{ finding.risk_score }})
+{% endfor %}
+{% else %}
+No correlated findings were generated.
+{% endif %}
+
+## Overall Risk Score
+
+{{ overall_risk_score }}/100
+
+## Report Paths
+
+- Raw report path: {{ report_paths.raw_report }}
+- Summary report path: {{ report_paths.summary_report }}
+- JSON report path: {{ report_paths.raw_json_report }}

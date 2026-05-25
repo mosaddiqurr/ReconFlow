@@ -41,7 +41,7 @@ def _fake_tool_check(tool_name: str, installed: bool) -> ToolCheckResult:
 
 def test_report_missing_scan_id_has_clear_error(monkeypatch) -> None:
     original_cwd = Path.cwd()
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         try:
             monkeypatch.chdir(Path(tmp_dir))
             result = runner.invoke(app, ["report", "scan_999_missing"])
@@ -55,7 +55,7 @@ def test_report_missing_scan_id_has_clear_error(monkeypatch) -> None:
 
 def test_report_missing_parsed_data_has_clear_error(monkeypatch) -> None:
     original_cwd = Path.cwd()
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         try:
             monkeypatch.chdir(temp_path)
@@ -91,7 +91,7 @@ def test_scan_reports_missing_external_tool(monkeypatch) -> None:
     monkeypatch.setattr("reconflow.cli.run_nmap", fake_run_nmap)
     monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
 
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         try:
             monkeypatch.chdir(temp_path)
@@ -127,7 +127,7 @@ def test_scan_reports_failed_command(monkeypatch) -> None:
     monkeypatch.setattr("reconflow.cli.run_nmap", fake_run_nmap)
     monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
 
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         try:
             monkeypatch.chdir(temp_path)
@@ -163,7 +163,7 @@ def test_scan_reports_timeout(monkeypatch) -> None:
     monkeypatch.setattr("reconflow.cli.run_nmap", fake_run_nmap)
     monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
 
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         try:
             monkeypatch.chdir(temp_path)
@@ -195,7 +195,7 @@ def test_dry_run_does_not_execute_external_tools(monkeypatch) -> None:
     monkeypatch.setattr("reconflow.cli.run_nmap", fail_run_nmap)
     monkeypatch.setattr("reconflow.cli.run_httpx", fail_run_httpx)
 
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         try:
             monkeypatch.chdir(Path(tmp_dir))
             result = runner.invoke(

@@ -235,7 +235,7 @@ def _create_sample_scan_pair(base_path: Path) -> tuple[Path, Path, str, str]:
 
 
 def test_compare_scans_from_parsed_json_files() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         first_scan_path, second_scan_path, first_scan_id, second_scan_id = (
             _create_sample_scan_pair(temp_path)
@@ -302,7 +302,7 @@ def test_compare_scans_from_parsed_json_files() -> None:
 
 def test_compare_command_writes_comparison_json(monkeypatch) -> None:
     original_cwd = Path.cwd()
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)
         try:
             monkeypatch.chdir(temp_path)

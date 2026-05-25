@@ -7,7 +7,7 @@ from reconflow.core.scorer import calculate_overall_risk_score, score_for_rule
 
 
 def test_correlate_scan_creates_findings_from_fake_parsed_data() -> None:
-    with TemporaryDirectory(dir="C:\\tmp") as tmp_dir:
+    with TemporaryDirectory() as tmp_dir:
         scan_path = Path(tmp_dir) / "scan_001_example_com"
         parsed_path = scan_path / "parsed"
         parsed_path.mkdir(parents=True)

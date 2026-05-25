@@ -1,0 +1,81 @@
+# ReconFlow Summary Report
+
+Scan ID: {{ scan_id }}
+
+## Scan Overview
+
+- Target: {{ scan_overview.target }}
+- Target type: {{ scan_overview.target_type }}
+- Scan mode: {{ scan_overview.scan_mode }}
+- Scan time: {{ scan_overview.scan_time }}
+- Overall risk score: {{ scan_overview.overall_risk_score }}/100
+- Risk level: {{ scan_overview.risk_level }}
+
+{% if key_findings["items"] %}
+## Key Findings
+
+{% for item in key_findings["items"] %}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+{% if security_observations %}
+## Security-Relevant Observations
+
+{% for observation in security_observations %}
+- **{{ observation.type }}:** {{ observation.title }} - {{ observation.detail }}
+{% endfor %}
+
+{% endif %}
+{% if vulnerability_summary %}
+## Vulnerability Summary
+
+{% for severity, vulnerabilities in vulnerability_summary.items() %}
+### {{ severity }}
+
+{% for vulnerability in vulnerabilities %}
+- **{{ vulnerability.name }}** affecting {{ vulnerability.affected }}. {{ vulnerability.reason }} Recommended action: {{ vulnerability.recommended_action }}
+{% endfor %}
+
+{% endfor %}
+{% endif %}
+{% if correlated_findings %}
+## Correlated Risk Findings
+
+{% for finding in correlated_findings %}
+- **{{ finding.severity }}:** {{ finding.title }} affecting {{ finding.affected }} (risk score {{ finding.risk_score }}). {{ finding.explanation }} Recommended action: {{ finding.recommended_action }}
+{% endfor %}
+
+{% endif %}
+## Recommended Next Actions
+
+{% for action in recommended_actions %}
+- {{ action }}
+{% endfor %}
+
+## Tool Execution Summary
+
+{% if tool_execution_summary.completed_tools %}
+- Completed tools: {{ tool_execution_summary.completed_tools | join(", ") }}
+{% endif %}
+{% if tool_execution_summary.skipped_tools %}
+- Skipped tools: {{ tool_execution_summary.skipped_tools | join(", ") }}
+{% endif %}
+{% if tool_execution_summary.missing_tools %}
+- Missing tools: {{ tool_execution_summary.missing_tools | join(", ") }}
+{% endif %}
+{% if tool_execution_summary.failed_tools %}
+- Failed tools: {{ tool_execution_summary.failed_tools | join(", ") }}
+{% endif %}
+{% if tool_execution_summary.timed_out_tools %}
+- Timed-out tools: {{ tool_execution_summary.timed_out_tools | join(", ") }}
+{% endif %}
+{% if not tool_execution_summary.completed_tools and not tool_execution_summary.skipped_tools and not tool_execution_summary.missing_tools and not tool_execution_summary.failed_tools and not tool_execution_summary.timed_out_tools %}
+- No tool execution details were recorded.
+{% endif %}
+
+## Report Paths
+
+- Raw report path: {{ report_paths.raw_report }}
+- Summary report path: {{ report_paths.summary_report }}
+- JSON report path: {{ report_paths.json_report }}
