@@ -7,6 +7,7 @@ from typing import Any
 from reconflow.core.runner import run_command
 from reconflow.models.asset import Asset
 from reconflow.tools.base import ToolAdapter
+from reconflow.tools.jsonl_utils import load_jsonl_records
 
 
 def build_dnsx_command(
@@ -61,14 +62,13 @@ def _record_entries(record: dict[str, Any]) -> list[tuple[str | None, str]]:
     return entries
 
 
-def parse_dnsx_jsonl(jsonl_path: str | Path) -> list[Asset]:
+def parse_dnsx_jsonl(
+    jsonl_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[Asset]:
     """Parse dnsx JSONL output into asset models."""
     assets: list[Asset] = []
-    for line in Path(jsonl_path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-
-        record = json.loads(line)
+    for record in load_jsonl_records(jsonl_path, parse_warnings):
         hostname = record.get("host") or record.get("input") or ""
         entries = _record_entries(record)
 

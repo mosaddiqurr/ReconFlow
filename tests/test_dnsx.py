@@ -67,6 +67,23 @@ def test_parse_dnsx_jsonl_fixture() -> None:
     assert assets[2].is_resolved is False
 
 
+def test_parse_dnsx_jsonl_skips_malformed_line() -> None:
+    warnings: list[str] = []
+    with TemporaryDirectory() as tmp_dir:
+        jsonl_path = Path(tmp_dir) / "dnsx.jsonl"
+        jsonl_path.write_text(
+            '{"host":"www.example.com","a":["93.184.216.34"]}\n'
+            '{"host":"broken.example.com"\n',
+            encoding="utf-8",
+        )
+
+        assets = parse_dnsx_jsonl(jsonl_path, parse_warnings=warnings)
+
+    assert len(assets) == 1
+    assert assets[0].hostname == "www.example.com"
+    assert warnings == ["Skipped 1 malformed JSONL line"]
+
+
 def test_save_assets_json() -> None:
     with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)

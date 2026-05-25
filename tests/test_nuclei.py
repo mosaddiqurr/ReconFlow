@@ -109,6 +109,23 @@ def test_parse_nuclei_jsonl_fixture() -> None:
     assert vulnerabilities[2].evidence == {"extracted-results": ["/admin"]}
 
 
+def test_parse_nuclei_jsonl_skips_malformed_line() -> None:
+    warnings: list[str] = []
+    with TemporaryDirectory() as tmp_dir:
+        jsonl_path = Path(tmp_dir) / "nuclei.jsonl"
+        jsonl_path.write_text(
+            '{"template-id":"tech","host":"https://example.com","info":{"name":"Tech","severity":"info"}}\n'
+            '{"template-id":"broken","host":"https://example.com"\n',
+            encoding="utf-8",
+        )
+
+        vulnerabilities = parse_nuclei_jsonl(jsonl_path, parse_warnings=warnings)
+
+    assert len(vulnerabilities) == 1
+    assert vulnerabilities[0].template_id == "tech"
+    assert warnings == ["Skipped 1 malformed JSONL line"]
+
+
 def test_save_vulnerabilities_json() -> None:
     with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)

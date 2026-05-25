@@ -55,6 +55,7 @@ Scan ID: {{ scan_id }}
 
 ## Tool Execution Summary
 
+- Completion status: {{ tool_execution_summary.completion_status }}
 {% if tool_execution_summary.completed_tools %}
 - Completed tools: {{ tool_execution_summary.completed_tools | join(", ") }}
 {% endif %}
@@ -70,7 +71,10 @@ Scan ID: {{ scan_id }}
 {% if tool_execution_summary.timed_out_tools %}
 - Timed-out tools: {{ tool_execution_summary.timed_out_tools | join(", ") }}
 {% endif %}
-{% if not tool_execution_summary.completed_tools and not tool_execution_summary.skipped_tools and not tool_execution_summary.missing_tools and not tool_execution_summary.failed_tools and not tool_execution_summary.timed_out_tools %}
+{% if tool_execution_summary.parse_warnings %}
+- Parse warnings: {{ tool_execution_summary.parse_warnings | join("; ") }}
+{% endif %}
+{% if not tool_execution_summary.completed_tools and not tool_execution_summary.skipped_tools and not tool_execution_summary.missing_tools and not tool_execution_summary.failed_tools and not tool_execution_summary.timed_out_tools and not tool_execution_summary.parse_warnings %}
 - No tool execution details were recorded.
 {% endif %}
 

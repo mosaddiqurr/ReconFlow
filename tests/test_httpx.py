@@ -74,6 +74,23 @@ def test_parse_httpx_jsonl_fixture() -> None:
     assert live_hosts[1].content_length == 178
 
 
+def test_parse_httpx_jsonl_skips_malformed_line() -> None:
+    warnings: list[str] = []
+    with TemporaryDirectory() as tmp_dir:
+        jsonl_path = Path(tmp_dir) / "httpx.jsonl"
+        jsonl_path.write_text(
+            '{"url":"https://example.com","host":"example.com"}\n'
+            '{"url":"https://broken.example.com"\n',
+            encoding="utf-8",
+        )
+
+        live_hosts = parse_httpx_jsonl(jsonl_path, parse_warnings=warnings)
+
+    assert len(live_hosts) == 1
+    assert live_hosts[0].url == "https://example.com"
+    assert warnings == ["Skipped 1 malformed JSONL line"]
+
+
 def test_save_live_hosts_json() -> None:
     with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)

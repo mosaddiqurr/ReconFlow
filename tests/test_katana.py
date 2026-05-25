@@ -96,6 +96,40 @@ def test_parse_katana_jsonl_fixture() -> None:
     assert crawled_urls[2].query_params == {"token": ["abc"]}
 
 
+def test_parse_katana_jsonl_skips_malformed_line() -> None:
+    malformed_jsonl = (
+        '{"url":"https://example.com/login"}\n'
+        '{"url":"https://example.com/truncated"\n'
+        '{"url":"https://example.com/admin"}\n'
+    )
+    warnings: list[str] = []
+
+    with TemporaryDirectory() as tmp_dir:
+        jsonl_path = Path(tmp_dir) / "katana.jsonl"
+        jsonl_path.write_text(malformed_jsonl, encoding="utf-8")
+
+        crawled_urls = parse_katana_jsonl(jsonl_path, parse_warnings=warnings)
+
+    assert [item.url for item in crawled_urls] == [
+        "https://example.com/login",
+        "https://example.com/admin",
+    ]
+    assert warnings == ["Skipped 1 malformed JSONL line"]
+
+
+def test_parse_katana_jsonl_returns_empty_list_when_all_lines_invalid() -> None:
+    warnings: list[str] = []
+
+    with TemporaryDirectory() as tmp_dir:
+        jsonl_path = Path(tmp_dir) / "katana.jsonl"
+        jsonl_path.write_text('{"url":"https://example.com"\n', encoding="utf-8")
+
+        crawled_urls = parse_katana_jsonl(jsonl_path, parse_warnings=warnings)
+
+    assert crawled_urls == []
+    assert warnings == ["Skipped 1 malformed JSONL line"]
+
+
 def test_interesting_crawled_url_markers() -> None:
     with TemporaryDirectory() as tmp_dir:
         jsonl_path = Path(tmp_dir) / "katana.jsonl"

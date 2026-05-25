@@ -9,6 +9,7 @@ from reconflow.core.runner import run_command
 from reconflow.models.crawled_url import CrawledUrl
 from reconflow.models.endpoint import Endpoint
 from reconflow.tools.base import ToolAdapter
+from reconflow.tools.jsonl_utils import load_jsonl_records
 
 
 INTERESTING_URL_MARKERS = (
@@ -71,16 +72,15 @@ def _url_from_record(record: dict[str, Any]) -> str:
     return str(record.get("url") or endpoint or "")
 
 
-def parse_katana_jsonl(jsonl_path: str | Path) -> list[CrawledUrl]:
+def parse_katana_jsonl(
+    jsonl_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[CrawledUrl]:
     """Parse Katana JSONL output into crawled URL models."""
     crawled_urls: list[CrawledUrl] = []
     seen: set[str] = set()
 
-    for line in Path(jsonl_path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-
-        record = json.loads(line)
+    for record in load_jsonl_records(jsonl_path, parse_warnings):
         url = _url_from_record(record)
         if not url or url in seen:
             continue

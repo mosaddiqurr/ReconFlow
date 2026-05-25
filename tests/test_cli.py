@@ -52,6 +52,50 @@ def mock_missing_web_tools(monkeypatch, tool_names: list[str] | None = None) -> 
         )
 
 
+def mock_malformed_katana_scan(monkeypatch) -> None:
+    sample_httpx_jsonl = (
+        '{"url":"https://example.com","host":"example.com","status_code":200}\n'
+    )
+    sample_katana_jsonl = (
+        '{"url":"https://example.com/login"}\n'
+        '{"url":"https://example.com/truncated"\n'
+        '{"url":"https://example.com/admin"}\n'
+    )
+
+    def fake_run_subfinder(target, scan_folder, timeout=None):
+        (Path(scan_folder) / "raw" / "subfinder.txt").write_text("", encoding="utf-8")
+        return tool_result("subfinder")
+
+    def fail_run_dnsx(scan_folder, subdomains, timeout=None):
+        raise AssertionError("dnsx should be skipped")
+
+    def fake_run_nmap(target, scan_folder, timeout=None):
+        return missing_tool_result("nmap")
+
+    def fake_run_httpx(target, scan_folder, resolved_hosts=None, timeout=None):
+        (Path(scan_folder) / "raw" / "httpx.jsonl").write_text(
+            sample_httpx_jsonl,
+            encoding="utf-8",
+        )
+        return tool_result("httpx")
+
+    def fake_run_katana(scan_folder, live_hosts_path, timeout=None):
+        assert Path(live_hosts_path).exists()
+        (Path(scan_folder) / "raw" / "katana.jsonl").write_text(
+            sample_katana_jsonl,
+            encoding="utf-8",
+        )
+        return tool_result("katana")
+
+    monkeypatch.setattr("reconflow.cli.run_subfinder", fake_run_subfinder)
+    monkeypatch.setattr("reconflow.cli.run_dnsx", fail_run_dnsx)
+    monkeypatch.setattr("reconflow.cli.run_nmap", fake_run_nmap)
+    monkeypatch.setattr("reconflow.cli.run_httpx", fake_run_httpx)
+    mock_missing_web_tools(monkeypatch, ["whatweb", "feroxbuster"])
+    monkeypatch.setattr("reconflow.cli.run_katana", fake_run_katana)
+    mock_missing_web_tools(monkeypatch, ["nuclei", "gowitness"])
+
+
 def test_help_shows_commands() -> None:
     result = runner.invoke(app, ["--help"])
 
@@ -1535,6 +1579,83 @@ def test_downstream_web_tools_run_after_httpx_creates_live_hosts(monkeypatch) ->
         "katana",
         "nuclei",
         "gowitness",
+    ]
+
+
+def test_scan_does_not_crash_when_katana_output_has_malformed_jsonl(
+    monkeypatch,
+) -> None:
+    original_cwd = Path.cwd()
+    mock_malformed_katana_scan(monkeypatch)
+
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        try:
+            monkeypatch.chdir(tmp_path)
+            result = runner.invoke(
+                app,
+                ["scan", "example.com", "--mode", "deep", "--i-authorize", "--view", "raw"],
+            )
+            scan_path = tmp_path / "scans" / "scan_001_example_com"
+            metadata = read_scan_metadata(scan_path / "metadata.json")
+            crawled_urls = json.loads(
+                (scan_path / "parsed" / "crawled_urls.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            raw_katana_exists = (scan_path / "raw" / "katana.jsonl").exists()
+        finally:
+            monkeypatch.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "Raw Scan Results" in result.output
+    assert "Tool 7: katana" in result.output
+    assert "Parse Warning" in result.output
+    assert metadata["tools_completed"] == ["subfinder", "httpx", "katana"]
+    assert metadata["tools_parse_warnings"] == [
+        {"tool": "katana", "message": "Skipped 1 malformed JSONL line"}
+    ]
+    assert [item["url"] for item in crawled_urls] == [
+        "https://example.com/login",
+        "https://example.com/admin",
+    ]
+    assert raw_katana_exists is True
+
+
+def test_summary_view_handles_katana_parse_warning(monkeypatch) -> None:
+    original_cwd = Path.cwd()
+    mock_malformed_katana_scan(monkeypatch)
+
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        try:
+            monkeypatch.chdir(tmp_path)
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "example.com",
+                    "--mode",
+                    "deep",
+                    "--i-authorize",
+                    "--view",
+                    "summary",
+                ],
+            )
+            metadata = read_scan_metadata(
+                tmp_path / "scans" / "scan_001_example_com" / "metadata.json"
+            )
+        finally:
+            monkeypatch.chdir(original_cwd)
+
+    assert result.exit_code == 0
+    assert "Summary Scan Results" in result.output
+    assert "Tool Execution Summary" in result.output
+    assert "Parse warnings" in result.output
+    assert "partially completed" in result.output
+    assert metadata["tools_completed"] == ["subfinder", "httpx", "katana"]
+    assert metadata["tools_parse_warnings"] == [
+        {"tool": "katana", "message": "Skipped 1 malformed JSONL line"}
     ]
 
 

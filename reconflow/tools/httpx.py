@@ -8,6 +8,7 @@ from reconflow.core.runner import run_command
 from reconflow.models.live_host import LiveHost
 
 from reconflow.tools.base import ToolAdapter
+from reconflow.tools.jsonl_utils import load_jsonl_records
 
 
 def select_httpx_inputs(target: str, resolved_hosts: list[str] | None = None) -> list[str]:
@@ -51,14 +52,13 @@ def _coerce_content_length(record: dict[str, Any]) -> int | None:
         return None
 
 
-def parse_httpx_jsonl(jsonl_path: str | Path) -> list[LiveHost]:
+def parse_httpx_jsonl(
+    jsonl_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[LiveHost]:
     """Parse httpx JSONL output into live host models."""
     live_hosts: list[LiveHost] = []
-    for line in Path(jsonl_path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-
-        record = json.loads(line)
+    for record in load_jsonl_records(jsonl_path, parse_warnings):
         url = record.get("url", "")
         live_hosts.append(
             LiveHost(

@@ -109,12 +109,14 @@
     <section>
       <h2>Tool Execution Summary</h2>
       <ul>
+        <li>Completion status: {{ tool_execution_summary.completion_status }}</li>
         {% if tool_execution_summary.completed_tools %}<li>Completed tools: {{ tool_execution_summary.completed_tools | join(", ") }}</li>{% endif %}
         {% if tool_execution_summary.skipped_tools %}<li>Skipped tools: {{ tool_execution_summary.skipped_tools | join(", ") }}</li>{% endif %}
         {% if tool_execution_summary.missing_tools %}<li>Missing tools: {{ tool_execution_summary.missing_tools | join(", ") }}</li>{% endif %}
         {% if tool_execution_summary.failed_tools %}<li>Failed tools: {{ tool_execution_summary.failed_tools | join(", ") }}</li>{% endif %}
         {% if tool_execution_summary.timed_out_tools %}<li>Timed-out tools: {{ tool_execution_summary.timed_out_tools | join(", ") }}</li>{% endif %}
-        {% if not tool_execution_summary.completed_tools and not tool_execution_summary.skipped_tools and not tool_execution_summary.missing_tools and not tool_execution_summary.failed_tools and not tool_execution_summary.timed_out_tools %}<li>No tool execution details were recorded.</li>{% endif %}
+        {% if tool_execution_summary.parse_warnings %}<li>Parse warnings: {{ tool_execution_summary.parse_warnings | join("; ") }}</li>{% endif %}
+        {% if not tool_execution_summary.completed_tools and not tool_execution_summary.skipped_tools and not tool_execution_summary.missing_tools and not tool_execution_summary.failed_tools and not tool_execution_summary.timed_out_tools and not tool_execution_summary.parse_warnings %}<li>No tool execution details were recorded.</li>{% endif %}
       </ul>
     </section>
 

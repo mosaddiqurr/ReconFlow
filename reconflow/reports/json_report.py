@@ -395,6 +395,7 @@ def _build_tool_result(
         "tool": tool_name,
         "status": status,
         "why": why or "-",
+        "parse_warnings": _tool_parse_warnings(metadata, tool_name),
         "command_summary": _tool_command_summary(metadata, tool_name),
         "raw_output_path": str(raw_path) if raw_path else "-",
         "parsed_output_path": str(parsed_path) if parsed_path else "-",
@@ -452,6 +453,14 @@ def _tool_command_summary(metadata: dict[str, Any], tool_name: str) -> str:
         if run.get("tool") == tool_name:
             return run.get("command", "-")
     return "-"
+
+
+def _tool_parse_warnings(metadata: dict[str, Any], tool_name: str) -> list[str]:
+    return [
+        item.get("message", "")
+        for item in metadata.get("tools_parse_warnings", [])
+        if item.get("tool") == tool_name and item.get("message")
+    ]
 
 
 def _key_findings(
@@ -697,12 +706,18 @@ def _tool_execution_summary(metadata: dict[str, Any]) -> dict[str, list[str]]:
         for item in failed_entries
         if item.get("reason") != "Command timed out"
     ]
+    parse_warnings = [
+        f"{item.get('tool', '-')}: {item.get('message', '-')}"
+        for item in metadata.get("tools_parse_warnings", [])
+    ]
     return {
+        "completion_status": "partially completed" if parse_warnings else "completed",
         "completed_tools": metadata.get("tools_completed", []),
         "skipped_tools": skipped_tools,
         "missing_tools": missing_tools,
         "failed_tools": failed_tools,
         "timed_out_tools": timed_out_tools,
+        "parse_warnings": parse_warnings,
     }
 
 

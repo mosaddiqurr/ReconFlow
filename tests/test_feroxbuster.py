@@ -108,6 +108,23 @@ def test_parse_feroxbuster_json_fixture() -> None:
     assert endpoints[1].interesting is False
 
 
+def test_parse_feroxbuster_json_skips_malformed_jsonl_line() -> None:
+    warnings: list[str] = []
+    with TemporaryDirectory() as tmp_dir:
+        output_path = Path(tmp_dir) / "feroxbuster.json"
+        output_path.write_text(
+            '{"type":"response","url":"https://example.com/admin","status":200}\n'
+            '{"type":"response","url":"https://example.com/broken"\n',
+            encoding="utf-8",
+        )
+
+        endpoints = parse_feroxbuster_json(output_path, parse_warnings=warnings)
+
+    assert len(endpoints) == 1
+    assert endpoints[0].url == "https://example.com/admin"
+    assert warnings == ["Skipped 1 malformed JSONL line"]
+
+
 def test_save_endpoints_json() -> None:
     with TemporaryDirectory() as tmp_dir:
         temp_path = Path(tmp_dir)

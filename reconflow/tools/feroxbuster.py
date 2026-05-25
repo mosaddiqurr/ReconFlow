@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from reconflow.core.runner import run_command
 from reconflow.models.endpoint import Endpoint
 from reconflow.tools.base import ToolAdapter
+from reconflow.tools.jsonl_utils import load_jsonl_records
 
 
 INTERESTING_PATH_MARKERS = (
@@ -104,7 +105,10 @@ def _endpoint_from_record(record: dict[str, Any]) -> Endpoint:
     )
 
 
-def _load_feroxbuster_records(output_path: str | Path) -> list[dict[str, Any]]:
+def _load_feroxbuster_records(
+    output_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[dict[str, Any]]:
     text = Path(output_path).read_text(encoding="utf-8").strip()
     if not text:
         return []
@@ -112,14 +116,7 @@ def _load_feroxbuster_records(output_path: str | Path) -> list[dict[str, Any]]:
     try:
         loaded = json.loads(text)
     except json.JSONDecodeError:
-        records: list[dict[str, Any]] = []
-        for line in text.splitlines():
-            if not line.strip():
-                continue
-            line_record = json.loads(line)
-            if isinstance(line_record, dict):
-                records.append(line_record)
-        return records
+        return load_jsonl_records(output_path, parse_warnings)
 
     if isinstance(loaded, list):
         return [record for record in loaded if isinstance(record, dict)]
@@ -131,10 +128,13 @@ def _load_feroxbuster_records(output_path: str | Path) -> list[dict[str, Any]]:
     return []
 
 
-def parse_feroxbuster_json(output_path: str | Path) -> list[Endpoint]:
+def parse_feroxbuster_json(
+    output_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[Endpoint]:
     """Parse Feroxbuster JSON output into endpoint models."""
     endpoints: list[Endpoint] = []
-    for record in _load_feroxbuster_records(output_path):
+    for record in _load_feroxbuster_records(output_path, parse_warnings):
         if record.get("type") and record.get("type") != "response":
             continue
         if not record.get("url"):

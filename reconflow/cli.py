@@ -106,6 +106,13 @@ def _mark_tool_failed(metadata: dict, tool_name: str, reason: str) -> None:
     failed_tools.append({"tool": tool_name, "reason": reason})
 
 
+def _mark_tool_parse_warning(metadata: dict, tool_name: str, message: str) -> None:
+    parse_warnings = metadata.setdefault("tools_parse_warnings", [])
+    warning = {"tool": tool_name, "message": message}
+    if warning not in parse_warnings:
+        parse_warnings.append(warning)
+
+
 def _record_tool_decision(metadata: dict, decision: WorkflowDecision) -> None:
     decisions = metadata.setdefault("tool_decisions", {})
     decisions[decision.tool_name] = {
@@ -137,6 +144,45 @@ def _normalize_result_view(view: str) -> str:
         valid_views = ", ".join(VALID_RESULT_VIEWS)
         raise ValueError(f"Invalid view '{view}'. Valid: {valid_views}.")
     return normalized_view
+
+
+def _parse_with_warnings(
+    tool_name: str,
+    parser,
+    metadata: dict,
+    scan_folder: Path,
+    *args,
+):
+    parse_warnings: list[str] = []
+    try:
+        parsed_items = parser(*args, parse_warnings=parse_warnings)
+    except TypeError:
+        try:
+            parsed_items = parser(*args)
+        except Exception as exc:  # pragma: no cover - exercised through CLI tests
+            return _handle_parser_exception(tool_name, exc, metadata, scan_folder)
+    except Exception as exc:
+        return _handle_parser_exception(tool_name, exc, metadata, scan_folder)
+
+    for warning in parse_warnings:
+        _mark_tool_parse_warning(metadata, tool_name, warning)
+        _print_parse_warning(tool_name, warning)
+    if parse_warnings:
+        write_scan_metadata(scan_folder, metadata)
+    return parsed_items
+
+
+def _handle_parser_exception(
+    tool_name: str,
+    exc: Exception,
+    metadata: dict,
+    scan_folder: Path,
+) -> list:
+    message = f"Parser failed safely: {exc.__class__.__name__}"
+    _mark_tool_parse_warning(metadata, tool_name, message)
+    write_scan_metadata(scan_folder, metadata)
+    _print_parse_warning(tool_name, message)
+    return []
 
 
 def _top_technologies_by_host(technologies: list) -> str:
@@ -246,6 +292,16 @@ def _print_tool_failure(result, decision: WorkflowDecision) -> None:
     console.print(table)
 
 
+def _print_parse_warning(tool_name: str, message: str) -> None:
+    table = Table(title="Parse Warning")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Tool", tool_name)
+    table.add_row("Warning", message)
+    table.add_row("Action", "Skipped invalid parser input and continued")
+    console.print(table)
+
+
 def _tool_result_ok(
     result,
     decision: WorkflowDecision,
@@ -352,6 +408,8 @@ def render_raw_cli_results(context: dict) -> None:
         details.add_column()
         details.add_row("Status", tool["status"])
         details.add_row("Why", tool["why"])
+        if tool["parse_warnings"]:
+            details.add_row("Parse Warning", "; ".join(tool["parse_warnings"]))
         details.add_row("Command", tool["command_summary"])
         details.add_row("Raw Output", tool["raw_output_path"])
         details.add_row("Parsed Output", tool["parsed_output_path"])
@@ -442,6 +500,7 @@ def render_summary_cli_results(context: dict) -> None:
     execution_table.add_column("Status", style="bold")
     execution_table.add_column("Tools")
     tool_summary = context["tool_execution_summary"]
+    execution_table.add_row("Completion", tool_summary["completion_status"])
     execution_table.add_row(
         "Completed",
         ", ".join(tool_summary["completed_tools"]) or "-",
@@ -452,6 +511,10 @@ def render_summary_cli_results(context: dict) -> None:
     execution_table.add_row(
         "Timed out",
         ", ".join(tool_summary["timed_out_tools"]) or "-",
+    )
+    execution_table.add_row(
+        "Parse warnings",
+        "; ".join(tool_summary["parse_warnings"]) or "-",
     )
     console.print(execution_table)
     _render_report_paths(context["report_paths"])
@@ -778,7 +841,13 @@ def scan(
             if not _tool_result_ok(dnsx_result, decision, metadata, scan_folder, tool_checks):
                 continue
             if dnsx_result.exit_code == 0 and raw_dnsx_path.exists():
-                assets = parse_dnsx_jsonl(raw_dnsx_path)
+                assets = _parse_with_warnings(
+                    "dnsx",
+                    parse_dnsx_jsonl,
+                    metadata,
+                    scan_folder,
+                    raw_dnsx_path,
+                )
                 workflow_state.resolved_hosts = [
                     asset.hostname for asset in assets if asset.is_resolved
                 ]
@@ -848,7 +917,13 @@ def scan(
             if not _tool_result_ok(httpx_result, decision, metadata, scan_folder, tool_checks):
                 continue
             if httpx_result.exit_code == 0 and raw_httpx_path.exists():
-                live_hosts = parse_httpx_jsonl(raw_httpx_path)
+                live_hosts = _parse_with_warnings(
+                    "httpx",
+                    parse_httpx_jsonl,
+                    metadata,
+                    scan_folder,
+                    raw_httpx_path,
+                )
                 workflow_state.live_hosts = [live_host.url for live_host in live_hosts]
                 save_live_hosts_json(live_hosts, parsed_live_hosts_path)
                 _mark_tool_completed(metadata, "httpx")
@@ -906,7 +981,13 @@ def scan(
             ):
                 continue
             if feroxbuster_result.exit_code == 0 and raw_feroxbuster_path.exists():
-                endpoints = parse_feroxbuster_json(raw_feroxbuster_path)
+                endpoints = _parse_with_warnings(
+                    "feroxbuster",
+                    parse_feroxbuster_json,
+                    metadata,
+                    scan_folder,
+                    raw_feroxbuster_path,
+                )
                 save_endpoints_json(endpoints, parsed_endpoints_path)
                 _mark_tool_completed(metadata, "feroxbuster")
                 write_scan_metadata(scan_folder, metadata)
@@ -928,7 +1009,13 @@ def scan(
             if not _tool_result_ok(katana_result, decision, metadata, scan_folder, tool_checks):
                 continue
             if katana_result.exit_code == 0 and raw_katana_path.exists():
-                crawled_urls = parse_katana_jsonl(raw_katana_path)
+                crawled_urls = _parse_with_warnings(
+                    "katana",
+                    parse_katana_jsonl,
+                    metadata,
+                    scan_folder,
+                    raw_katana_path,
+                )
                 save_crawled_urls_json(crawled_urls, parsed_crawled_urls_path)
                 endpoints = merge_interesting_crawled_urls_into_endpoints(
                     crawled_urls,
@@ -954,7 +1041,13 @@ def scan(
             if not _tool_result_ok(nuclei_result, decision, metadata, scan_folder, tool_checks):
                 continue
             if nuclei_result.exit_code == 0 and raw_nuclei_path.exists():
-                vulnerabilities = parse_nuclei_jsonl(raw_nuclei_path)
+                vulnerabilities = _parse_with_warnings(
+                    "nuclei",
+                    parse_nuclei_jsonl,
+                    metadata,
+                    scan_folder,
+                    raw_nuclei_path,
+                )
                 save_vulnerabilities_json(
                     vulnerabilities,
                     parsed_vulnerabilities_path,

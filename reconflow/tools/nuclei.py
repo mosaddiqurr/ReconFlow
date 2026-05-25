@@ -7,6 +7,7 @@ from typing import Any
 from reconflow.core.runner import run_command
 from reconflow.models.vulnerability import Vulnerability
 from reconflow.tools.base import ToolAdapter
+from reconflow.tools.jsonl_utils import load_jsonl_records
 
 
 SAFE_EXCLUDED_TAGS = (
@@ -91,14 +92,13 @@ def _evidence_from_record(record: dict[str, Any]) -> dict[str, Any]:
     return {key: record[key] for key in evidence_keys if key in record}
 
 
-def parse_nuclei_jsonl(jsonl_path: str | Path) -> list[Vulnerability]:
+def parse_nuclei_jsonl(
+    jsonl_path: str | Path,
+    parse_warnings: list[str] | None = None,
+) -> list[Vulnerability]:
     """Parse Nuclei JSONL output into vulnerability models."""
     vulnerabilities: list[Vulnerability] = []
-    for line in Path(jsonl_path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-
-        record = json.loads(line)
+    for record in load_jsonl_records(jsonl_path, parse_warnings):
         info = record.get("info", {})
         if not isinstance(info, dict):
             info = {}

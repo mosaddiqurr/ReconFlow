@@ -18,6 +18,9 @@ Scan ID: {{ scan_id }}
 
 - Status: {{ tool.status }}
 - Why: {{ tool.why }}
+{% if tool.parse_warnings %}
+- Parse warnings: {{ tool.parse_warnings | join("; ") }}
+{% endif %}
 - Command summary: {{ tool.command_summary }}
 - Raw output file path: {{ tool.raw_output_path }}
 - Parsed output file path: {{ tool.parsed_output_path }}

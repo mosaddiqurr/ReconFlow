@@ -50,6 +50,7 @@
         <ul>
           <li>Status: {{ tool.status }}</li>
           <li>Why: {{ tool.why }}</li>
+          {% if tool.parse_warnings %}<li>Parse warnings: {{ tool.parse_warnings | join("; ") }}</li>{% endif %}
           <li>Command summary: <code>{{ tool.command_summary }}</code></li>
           <li>Raw output file path: {{ tool.raw_output_path }}</li>
           <li>Parsed output file path: {{ tool.parsed_output_path }}</li>
